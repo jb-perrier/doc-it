@@ -1,0 +1,16 @@
+backend/target/
+backend/.git.local-backup/
+backend/docit.db
+backend/docit.db-shm
+backend/docit.db-wal
+
+frontend/node_modules/
+frontend/.output/
+frontend/.vercel/
+frontend/.netlify/
+frontend/.wrangler/
+frontend/.svelte-kit/
+frontend/build/
+
+.DS_Store
+Thumbs.db

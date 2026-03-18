@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en" data-theme="dark" style="color-scheme: dark">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta
+			name="description"
+			content="Doc-it is a minimal realtime collaborative editor for Markdown-backed documents."
+		/>
+		<script>
+			(() => {
+				const storageKey = 'docit.theme';
+				const defaultTheme = 'dark';
+				let theme = defaultTheme;
+
+				try {
+					const storedTheme = window.localStorage.getItem(storageKey);
+					if (storedTheme === 'light' || storedTheme === 'dark') {
+						theme = storedTheme;
+					}
+				} catch {
+					theme = defaultTheme;
+				}
+
+				document.documentElement.dataset.theme = theme;
+				document.documentElement.style.colorScheme = theme;
+			})();
+		</script>
+		<style>
+			html {
+				background: #17171a;
+				min-height: 100%;
+			}
+
+			body {
+				margin: 0;
+				min-height: 100vh;
+				color: #efece7;
+				background: linear-gradient(180deg, #151517 0%, #17171a 28%, #101113 100%);
+			}
+
+			html[data-theme='light'] {
+				background: #f3eee6;
+			}
+
+			html[data-theme='light'] body {
+				color: #241c15;
+				background: linear-gradient(180deg, #f7f2ea 0%, #f3eee6 28%, #ece2d6 100%);
+			}
+		</style>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>
