@@ -5,6 +5,7 @@ backend/docit.db-shm
 backend/docit.db-wal
 
 frontend/node_modules/
+frontend/.vscode/
 frontend/.output/
 frontend/.vercel/
 frontend/.netlify/
