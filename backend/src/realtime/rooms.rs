@@ -1,17 +1,17 @@
 use std::{
     collections::HashMap,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use axum::extract::ws::Message;
-use base64::{engine::general_purpose::STANDARD as Base64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use chrono::Utc;
-use tokio::sync::{mpsc::UnboundedSender, Mutex, RwLock};
-use yrs::{updates::decoder::Decode, Doc, ReadTxn, StateVector, Transact, Update};
+use tokio::sync::{Mutex, RwLock, mpsc::UnboundedSender};
+use yrs::{Doc, ReadTxn, StateVector, Transact, Update, updates::decoder::Decode};
 
 use crate::{
     db::Database,
@@ -69,13 +69,41 @@ impl RoomManager {
         Ok(entry.clone())
     }
 
+    pub async fn remove_peer(&self, document_id: &str, client_id: &str) {
+        let room = self.rooms.read().await.get(document_id).cloned();
+
+        if let Some(room) = room {
+            room.remove_peer(client_id).await;
+            self.evict_if_inactive(document_id, &room).await;
+        }
+    }
+
     async fn expire_stale_peers(&self) {
         let rooms = self.rooms.read().await;
-        let list = rooms.values().cloned().collect::<Vec<_>>();
+        let list = rooms
+            .iter()
+            .map(|(document_id, room)| (document_id.clone(), room.clone()))
+            .collect::<Vec<_>>();
         drop(rooms);
 
-        for room in list {
+        for (document_id, room) in list {
             room.expire_stale_peers().await;
+            self.evict_if_inactive(&document_id, &room).await;
+        }
+    }
+
+    async fn evict_if_inactive(&self, document_id: &str, room: &Arc<Room>) {
+        if !room.is_empty().await {
+            return;
+        }
+
+        let mut rooms = self.rooms.write().await;
+        let Some(current) = rooms.get(document_id) else {
+            return;
+        };
+
+        if Arc::ptr_eq(current, room) && room.is_empty().await {
+            rooms.remove(document_id);
         }
     }
 }
@@ -107,8 +135,8 @@ pub struct JoinContext {
 impl Room {
     fn from_seed(db: Database, seed: RoomSeed) -> Result<Self, AppError> {
         let doc = Doc::new();
-        let update = Update::decode_v1(&seed.snapshot.yjs_snapshot)
-            .map_err(|_| AppError::Internal)?;
+        let update =
+            Update::decode_v1(&seed.snapshot.yjs_snapshot).map_err(|_| AppError::Internal)?;
         {
             let mut txn = doc.transact_mut();
             txn.apply_update(update).map_err(|_| AppError::Internal)?;
@@ -185,7 +213,7 @@ impl Room {
         let sender_id = payload.client_id.clone();
         self.broadcast_except(&sender_id, &ServerMessage::SyncUpdate(payload))
             .await;
-        self.schedule_persist(false);
+        self.schedule_persist();
         Ok(())
     }
 
@@ -209,6 +237,10 @@ impl Room {
 
     pub async fn remove_peer(self: &Arc<Self>, client_id: &str) {
         self.remove_peer_internal(client_id, false).await;
+    }
+
+    async fn is_empty(&self) -> bool {
+        self.peers.lock().await.is_empty()
     }
 
     async fn expire_stale_peers(self: &Arc<Self>) {
@@ -240,24 +272,24 @@ impl Room {
         }
 
         if is_empty {
-            self.flush(true).await;
+            self.save_ticket.fetch_add(1, Ordering::SeqCst);
+            self.flush().await;
         }
     }
 
-    fn schedule_persist(self: &Arc<Self>, force_snapshot: bool) {
+    fn schedule_persist(self: &Arc<Self>) {
         let ticket = self.save_ticket.fetch_add(1, Ordering::SeqCst) + 1;
         let room = self.clone();
 
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(2)).await;
             if room.save_ticket.load(Ordering::SeqCst) == ticket {
-                room.flush(force_snapshot).await;
+                room.flush().await;
             }
         });
     }
 
-    async fn flush(&self, force_snapshot: bool) {
-        let _ = force_snapshot;
+    async fn flush(&self) {
         let snapshot_bytes = self.full_update_bytes().await;
 
         match self
@@ -267,7 +299,9 @@ impl Room {
         {
             Ok(true) => {}
             Ok(false) => {}
-            Err(error) => tracing::error!(?error, document_id = %self.document_id, "failed to persist room state"),
+            Err(error) => {
+                tracing::error!(?error, document_id = %self.document_id, "failed to persist room state")
+            }
         }
     }
 
@@ -287,7 +321,8 @@ impl Room {
             peers: peers.values().map(to_presence).collect(),
         };
         drop(peers);
-        self.broadcast(&ServerMessage::PresenceSnapshot(payload)).await;
+        self.broadcast(&ServerMessage::PresenceSnapshot(payload))
+            .await;
     }
 
     async fn broadcast(&self, message: &ServerMessage) {
@@ -331,4 +366,123 @@ fn to_presence(peer: &PeerState) -> PeerPresence {
 
 fn iso_now() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tokio::sync::mpsc;
+    use yrs::{XmlFragment, XmlTextPrelim, types::GetString};
+
+    use crate::{db::migrations::run_migrations, models::ws::SyncUpdatePayload};
+
+    async fn test_db() -> Database {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        run_migrations(&pool).await.expect("run migrations");
+        Database::new(pool)
+    }
+
+    fn sync_update_with_text(client_id: &str, text: &str) -> SyncUpdatePayload {
+        let doc = Doc::new();
+        let fragment = doc.get_or_insert_xml_fragment("content");
+        let mut txn = doc.transact_mut();
+        fragment.push_back(&mut txn, XmlTextPrelim::new(text));
+        let update = txn.encode_state_as_update_v1(&StateVector::default());
+
+        SyncUpdatePayload {
+            client_id: client_id.to_string(),
+            update: Base64.encode(update),
+        }
+    }
+
+    fn snapshot_text(snapshot: &[u8]) -> String {
+        let doc = Doc::new();
+        let fragment = doc.get_or_insert_xml_fragment("content");
+        let update = Update::decode_v1(snapshot).expect("decode snapshot");
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update).expect("apply snapshot");
+        drop(txn);
+
+        let txn = doc.transact();
+        fragment.get_string(&txn)
+    }
+
+    #[tokio::test]
+    async fn removes_empty_rooms_and_keeps_reopened_state_isolated() {
+        let db = test_db().await;
+        let manager = RoomManager::new(db.clone());
+        let document = db
+            .create_document("Room eviction")
+            .await
+            .expect("create document");
+
+        let room = manager
+            .get_or_create(&document.id)
+            .await
+            .expect("create first room");
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        room.join(
+            "client-1".to_string(),
+            "Alice".to_string(),
+            "#111111".to_string(),
+            sender,
+        )
+        .await
+        .expect("join first room");
+        room.apply_update(sync_update_with_text("client-1", "first"))
+            .await
+            .expect("apply first update");
+
+        manager.remove_peer(&document.id, "client-1").await;
+
+        assert!(manager.rooms.read().await.is_empty());
+
+        let reopened = manager
+            .get_or_create(&document.id)
+            .await
+            .expect("recreate room after eviction");
+        assert!(!Arc::ptr_eq(&room, &reopened));
+
+        let (sender, _receiver) = mpsc::unbounded_channel();
+        reopened
+            .join(
+                "client-2".to_string(),
+                "Bob".to_string(),
+                "#222222".to_string(),
+                sender,
+            )
+            .await
+            .expect("join reopened room");
+        reopened
+            .apply_update(sync_update_with_text("client-2", "second"))
+            .await
+            .expect("apply second update");
+
+        manager.remove_peer(&document.id, "client-2").await;
+
+        assert!(manager.rooms.read().await.is_empty());
+
+        let expected = db
+            .load_room_seed(&document.id)
+            .await
+            .expect("load room seed before delayed flush")
+            .expect("room seed exists before delayed flush");
+        let expected_text = snapshot_text(&expected.snapshot.yjs_snapshot);
+
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        let seed = db
+            .load_room_seed(&document.id)
+            .await
+            .expect("load room seed")
+            .expect("room seed exists");
+
+        assert_eq!(snapshot_text(&seed.snapshot.yjs_snapshot), expected_text);
+    }
 }

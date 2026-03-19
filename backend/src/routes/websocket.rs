@@ -32,8 +32,9 @@ async fn websocket_handler(
     Path(document_id): Path<String>,
     ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
-    let room = state.rooms.get_or_create(&document_id).await?;
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, room)))
+    let rooms = state.rooms.clone();
+    let room = rooms.get_or_create(&document_id).await?;
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, room, rooms, document_id)))
 }
 
 fn serialize_server_message(message: &ServerMessage) -> Message {
@@ -51,7 +52,12 @@ async fn send_handshake_error(sender: &mut SplitSink<WebSocket, Message>, messag
         .await;
 }
 
-async fn handle_socket(socket: WebSocket, room: Arc<crate::realtime::rooms::Room>) {
+async fn handle_socket(
+    socket: WebSocket,
+    room: Arc<crate::realtime::rooms::Room>,
+    rooms: crate::realtime::rooms::RoomManager,
+    document_id: String,
+) {
     let (mut sender, mut receiver) = socket.split();
 
     let Some(Ok(Message::Text(message))) = receiver.next().await else {
@@ -135,7 +141,7 @@ async fn handle_socket(socket: WebSocket, room: Arc<crate::realtime::rooms::Room
         }
     }
 
-    room.remove_peer(&client_id).await;
+    rooms.remove_peer(&document_id, &client_id).await;
     outgoing_task.abort();
 }
 
