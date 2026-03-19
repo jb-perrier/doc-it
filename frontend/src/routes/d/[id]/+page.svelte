@@ -544,7 +544,8 @@
 									{#each documentMenu.items as item (item)}
 										<button
 											type="button"
-											class:dropdown-item--danger={item === "Delete"}
+											class:dropdown-item--danger={item ===
+												"Delete"}
 											class="dropdown-item"
 										>
 											{item}
@@ -1087,7 +1088,9 @@
 		font-size: var(--presence-chip-font-size, 0.84rem);
 		text-align: left;
 		cursor: pointer;
-		transition: background 120ms ease, color 120ms ease;
+		transition:
+			background 120ms ease,
+			color 120ms ease;
 	}
 
 	.dropdown-item:hover,
