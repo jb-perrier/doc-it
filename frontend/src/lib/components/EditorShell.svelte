@@ -16,16 +16,26 @@
 		getEmptyFormattingState,
 		toggleEditorFormatting,
 	} from "$lib/editor/tiptap";
+	import FolderPathBadge from "$lib/components/FolderPathBadge.svelte";
+	import type { FolderPathSegment } from "$lib/folders/path";
 	import type {
 		EditorFormattingState,
 		FormattingBadgeKey,
 		PeerPresence,
 	} from "$lib/types";
 
-	let { title, doc, peers, onTitleChange, onSelectionChange } = $props<{
+	let {
+		title,
+		doc,
+		peers,
+		folderPath = [],
+		onTitleChange,
+		onSelectionChange,
+	} = $props<{
 		title: string;
 		doc: Y.Doc;
 		peers: PeerPresence[];
+		folderPath?: FolderPathSegment[];
 		onTitleChange: (title: string) => void;
 		onSelectionChange: (anchor: number, head: number) => void;
 	}>();
@@ -380,6 +390,11 @@
 				oninput={handleTitleInput}
 				onkeydown={handleTitleKeyDown}
 			></div>
+			{#if folderPath.length > 0}
+				<div class="editor-folder-path">
+					<FolderPathBadge segments={folderPath} size="sm" />
+				</div>
+			{/if}
 		</div>
 
 		<div class="editor-host">
@@ -453,7 +468,7 @@
 
 	.editor-title {
 		min-height: 2.8rem;
-		margin: 0 0 1.2rem;
+		margin: 0;
 		outline: none;
 		font-size: 2.5rem;
 		font-weight: 700;
@@ -467,6 +482,10 @@
 	.editor-title:empty::before {
 		content: attr(data-placeholder);
 		color: var(--muted);
+	}
+
+	.editor-folder-path {
+		margin: 0.85rem 0 1.2rem;
 	}
 
 	.editor-host {
@@ -632,6 +651,7 @@
 
 	:global(.doc-editor .code-block-node pre code) {
 		display: block;
+		padding-inline: 2rem;
 		background: transparent;
 		color: var(--syntax-text);
 	}

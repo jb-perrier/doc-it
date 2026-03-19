@@ -4,7 +4,9 @@
     import { Search, Sun, Moon, Plus } from "lucide-svelte";
 
     import { createDocument, listDocuments } from "$lib/api/documents";
+    import { listFolders } from "$lib/api/folders";
     import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
+    import { getFolderPathSegments } from "$lib/folders/path";
     import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
     import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
     import { getDocumentSearchResults } from "$lib/search/documents";
@@ -13,9 +15,14 @@
         updateSessionProfileName,
     } from "$lib/stores/session";
     import { theme, toggleTheme } from "$lib/stores/theme";
-    import type { DocumentSummary, SessionProfile } from "$lib/types";
+    import type {
+        DocumentSummary,
+        FolderSummary,
+        SessionProfile,
+    } from "$lib/types";
 
     let documents = $state<DocumentSummary[]>([]);
+    let folders = $state<FolderSummary[]>([]);
     let session = $state<SessionProfile | null>(null);
     let loading = $state(true);
     let creating = $state(false);
@@ -57,7 +64,12 @@
         errorMessage = "";
 
         try {
-            documents = await listDocuments();
+            const [nextDocuments, nextFolders] = await Promise.all([
+                listDocuments(),
+                listFolders().catch(() => []),
+            ]);
+            documents = nextDocuments;
+            folders = nextFolders;
         } catch (error) {
             errorMessage =
                 error instanceof Error
@@ -84,6 +96,10 @@
 
     function getSearchResults() {
         return getDocumentSearchResults(documents, searchQuery);
+    }
+
+    function getFolderPath(document: DocumentSummary) {
+        return getFolderPathSegments(document.folderId, folders);
     }
 
     function handleSearchQueryChange(value: string) {
@@ -217,6 +233,7 @@
             {loading}
             {errorMessage}
             inputLeading={searchInputLeading}
+            {getFolderPath}
             onQueryChange={handleSearchQueryChange}
             onKeyDown={handleSearchInputKeyDown}
             onOpenResult={(target) => goto(`/d/${target.id}`)}

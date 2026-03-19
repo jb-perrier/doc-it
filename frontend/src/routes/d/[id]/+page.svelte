@@ -10,11 +10,13 @@
         listDocuments,
         renameDocumentTitle,
     } from "$lib/api/documents";
+    import { listFolders } from "$lib/api/folders";
     import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
     import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
     import PresenceBar from "$lib/components/PresenceBar.svelte";
     import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
     import EditorShell from "$lib/components/EditorShell.svelte";
+    import { getFolderPathSegments } from "$lib/folders/path";
     import { RealtimeClient } from "$lib/realtime/client";
     import { getDocumentSearchResults } from "$lib/search/documents";
     import {
@@ -25,6 +27,7 @@
     import type {
         DocumentRecord,
         DocumentSummary,
+        FolderSummary,
         PeerPresence,
         SessionProfile,
     } from "$lib/types";
@@ -48,7 +51,9 @@
     let searchModeOpen = $state(false);
     let searchQuery = $state("");
     let searchResultsIndex = $state(0);
+    let folders = $state<FolderSummary[]>([]);
     let searchDocuments = $state<DocumentSummary[] | null>(null);
+    let searchFolders = $state<FolderSummary[] | null>(null);
     let searchLoading = $state(false);
     let searchErrorMessage = $state("");
     let savedDocumentScrollY = 0;
@@ -124,6 +129,7 @@
 
         try {
             const nextSession = await getSessionProfile();
+            const nextFolders = await listFolders().catch(() => []);
 
             if (isCancelled()) {
                 nextYdoc.destroy();
@@ -137,6 +143,7 @@
             }
 
             session = nextSession;
+            folders = nextFolders;
             usernameDraft = nextSession.name;
             document = initialDocument;
             titleDraft = initialDocument.title;
@@ -396,14 +403,24 @@
     }
 
     async function ensureSearchDocumentsLoaded() {
-        if (searchDocuments || searchLoading) {
+        if (searchLoading || (searchDocuments && searchFolders)) {
             return;
         }
 
         searchLoading = true;
         searchErrorMessage = "";
         try {
-            searchDocuments = await listDocuments();
+            const [nextDocuments, nextFolders] = await Promise.all([
+                searchDocuments
+                    ? Promise.resolve(searchDocuments)
+                    : listDocuments(),
+                searchFolders
+                    ? Promise.resolve(searchFolders)
+                    : listFolders().catch(() => []),
+            ]);
+
+            searchDocuments = nextDocuments;
+            searchFolders = nextFolders;
         } catch (error) {
             searchErrorMessage =
                 error instanceof Error
@@ -418,6 +435,18 @@
         return getDocumentSearchResults(searchDocuments ?? [], searchQuery, {
             excludeDocumentId: data.id,
         });
+    }
+
+    function getDocumentFolderPath() {
+        if (!document) {
+            return [];
+        }
+
+        return getFolderPathSegments(document.folderId, folders);
+    }
+
+    function getFolderPath(document: DocumentSummary) {
+        return getFolderPathSegments(document.folderId, searchFolders ?? []);
     }
 
     function handleSearchInputKeyDown(event: KeyboardEvent) {
@@ -579,6 +608,7 @@
                     loading={searchLoading}
                     errorMessage={searchErrorMessage}
                     inputLeading={searchInputLeading}
+                    {getFolderPath}
                     onQueryChange={handleSearchQueryChange}
                     onKeyDown={handleSearchInputKeyDown}
                     onOpenResult={(target) => void openSearchResult(target)}
@@ -594,6 +624,7 @@
                                 title={titleDraft}
                                 doc={ydoc}
                                 {peers}
+                                folderPath={getDocumentFolderPath()}
                                 onTitleChange={handleTitleChange}
                                 onSelectionChange={handleSelectionChange}
                             />

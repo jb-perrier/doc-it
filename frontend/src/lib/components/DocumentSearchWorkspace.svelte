@@ -2,6 +2,8 @@
     import type { Snippet } from "svelte";
     import { onMount, tick } from "svelte";
 
+    import FolderPathBadge from "$lib/components/FolderPathBadge.svelte";
+    import type { FolderPathSegment } from "$lib/folders/path";
     import type { DocumentSearchResult } from "$lib/search/documents";
 
     let {
@@ -14,6 +16,7 @@
         placeholder = "Find another document",
         autoFocus = true,
         inputLeading,
+        getFolderPath,
         onQueryChange,
         onKeyDown,
         onOpenResult,
@@ -28,6 +31,9 @@
         placeholder?: string;
         autoFocus?: boolean;
         inputLeading?: Snippet;
+        getFolderPath?: (
+            document: DocumentSearchResult["document"],
+        ) => FolderPathSegment[];
         onQueryChange: (value: string) => void;
         onKeyDown: (event: KeyboardEvent) => void;
         onOpenResult: (result: DocumentSearchResult["document"]) => void;
@@ -91,6 +97,7 @@
                     <p class="search-workspace__label">Matching documents</p>
                 {/if}
                 {#each results as result, index (result.document.id)}
+                    {@const folderPath = getFolderPath?.(result.document) ?? []}
                     <button
                         type="button"
                         class:selected={index === selectedIndex}
@@ -98,12 +105,22 @@
                         onclick={() => onOpenResult(result.document)}
                         onmousemove={() => onHoverResult?.(index)}
                     >
-                        <span class="search-result__title"
-                            >{result.document.title || "Untitled"}</span
-                        >
-                        <span class="search-result__meta">
-                            Updated {formatUpdatedAt(result.document.updatedAt)}
+                        <span class="search-result__content">
+                            <span class="search-result__title"
+                                >{result.document.title || "Untitled"}</span
+                            >
+                            <span class="search-result__meta">
+                                Updated {formatUpdatedAt(
+                                    result.document.updatedAt,
+                                )}
+                            </span>
                         </span>
+
+                        {#if folderPath.length > 0}
+                            <span class="search-result__folder-path">
+                                <FolderPathBadge segments={folderPath} />
+                            </span>
+                        {/if}
                     </button>
                 {/each}
             </div>
@@ -182,7 +199,9 @@
 
     .search-result {
         display: grid;
-        gap: 4px;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        gap: 12px;
         width: 100%;
         padding: 16px 0;
         border: 0;
@@ -199,6 +218,12 @@
         color: var(--text);
     }
 
+    .search-result__content {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+    }
+
     .search-result__title {
         font-weight: 500;
         font-size: 1.02rem;
@@ -207,6 +232,13 @@
     .search-result__meta {
         font-size: 0.82rem;
         color: var(--muted);
+    }
+
+    .search-result__folder-path {
+        display: inline-flex;
+        justify-self: end;
+        min-width: 0;
+        max-width: min(100%, 22rem);
     }
 
     @media (max-width: 1180px) {
@@ -221,6 +253,16 @@
 
         .search-workspace__input {
             font-size: clamp(1.6rem, 8vw, 2.4rem);
+        }
+
+        .search-result {
+            grid-template-columns: 1fr;
+            justify-items: start;
+        }
+
+        .search-result__folder-path {
+            justify-self: start;
+            max-width: 100%;
         }
     }
 </style>
