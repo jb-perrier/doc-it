@@ -56,7 +56,7 @@
 
 	const documentMenu = {
 		label: "Document",
-		items: ["Rename", "Duplicate", "Export Markdown"],
+		items: ["Rename", "Duplicate", "Export Markdown", "Delete"],
 	} as const;
 
 	const shareMenu = {
@@ -540,15 +540,12 @@
 								<ChevronDown size={14} strokeWidth={2.2} />
 							</summary>
 							<div class="dropdown-panel">
-								<p class="dropdown-label">
-									Placeholder actions
-								</p>
 								<div class="dropdown-items">
 									{#each documentMenu.items as item (item)}
 										<button
 											type="button"
+											class:dropdown-item--danger={item === "Delete"}
 											class="dropdown-item"
-											disabled
 										>
 											{item}
 										</button>
@@ -718,15 +715,11 @@
 									<ChevronDown size={14} strokeWidth={2.2} />
 								</summary>
 								<div class="dropdown-panel">
-									<p class="dropdown-label">
-										Placeholder actions
-									</p>
 									<div class="dropdown-items">
 										{#each shareMenu.items as item (item)}
 											<button
 												type="button"
 												class="dropdown-item"
-												disabled
 											>
 												{item}
 											</button>
@@ -833,6 +826,7 @@
 		--menu-badge-height: calc(
 			1em + (var(--presence-chip-padding-y, 4px) * 2) + 2px
 		);
+		--menu-badge-radius: 8px;
 		--presence-chip-padding-y: 4px;
 		--presence-chip-padding-x: 10px;
 		--presence-chip-font-size: 0.84rem;
@@ -915,7 +909,7 @@
 		line-height: 1;
 		padding: 0 var(--presence-chip-padding-x, 10px);
 		border: 1px solid var(--line);
-		border-radius: 8px;
+		border-radius: var(--menu-badge-radius);
 		background: var(--surface-overlay);
 		color: var(--text);
 		font-size: var(--presence-chip-font-size, 0.84rem);
@@ -982,12 +976,11 @@
 		top: calc(100% + 10px);
 		left: 0;
 		min-width: 220px;
-		padding: 12px;
+		padding: 0;
 		border: 1px solid var(--line);
-		border-radius: 16px;
-		background: var(--dropdown-panel-bg);
+		border-radius: var(--menu-badge-radius);
+		background: var(--surface-overlay);
 		box-shadow: var(--shadow);
-		backdrop-filter: blur(16px);
 	}
 
 	.dropdown-badge--right .dropdown-panel {
@@ -1005,7 +998,7 @@
 
 	.dropdown-items {
 		display: grid;
-		gap: 6px;
+		gap: 0;
 	}
 
 	.settings-panel {
@@ -1083,14 +1076,30 @@
 
 	.dropdown-item {
 		width: 100%;
-		padding: 10px 12px;
-		border: 1px solid var(--line);
-		border-radius: 12px;
-		background: var(--surface-overlay);
+		display: flex;
+		align-items: center;
+		block-size: var(--menu-badge-height);
+		padding: 0 10px;
+		border: 0;
+		border-radius: var(--menu-badge-radius);
+		background: transparent;
 		color: var(--text);
+		font-size: var(--presence-chip-font-size, 0.84rem);
 		text-align: left;
-		cursor: not-allowed;
-		opacity: 0.72;
+		cursor: pointer;
+		transition: background 120ms ease, color 120ms ease;
+	}
+
+	.dropdown-item:hover,
+	.dropdown-item:focus-visible {
+		background: var(--surface-overlay-medium);
+		border-radius: 0;
+	}
+
+	.dropdown-item--danger {
+		border-top: 1px solid var(--line);
+		border-radius: 0;
+		color: var(--danger);
 	}
 
 	.topbar-meta {
