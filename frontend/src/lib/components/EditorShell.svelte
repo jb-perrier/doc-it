@@ -1,30 +1,28 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import type { Editor } from '@tiptap/core';
+	import { onDestroy, onMount } from "svelte";
+	import type { Editor } from "@tiptap/core";
 	import {
 		Bold,
 		Code2,
 		Italic,
 		Strikethrough,
-		Underline
-	} from 'lucide-svelte';
-	import type * as Y from 'yjs';
+		Underline,
+	} from "lucide-svelte";
+	import type * as Y from "yjs";
 
 	import {
 		createEditor,
 		getEditorFormattingState,
 		getEmptyFormattingState,
-		toggleEditorFormatting
-	} from '$lib/editor/tiptap';
-	import type { EditorFormattingState, FormattingBadgeKey, PeerPresence } from '$lib/types';
+		toggleEditorFormatting,
+	} from "$lib/editor/tiptap";
+	import type {
+		EditorFormattingState,
+		FormattingBadgeKey,
+		PeerPresence,
+	} from "$lib/types";
 
-	let {
-		title,
-		doc,
-		peers,
-		onTitleChange,
-		onSelectionChange
-	} = $props<{
+	let { title, doc, peers, onTitleChange, onSelectionChange } = $props<{
 		title: string;
 		doc: Y.Doc;
 		peers: PeerPresence[];
@@ -37,18 +35,26 @@
 		label: string;
 		icon: typeof Bold;
 	}> = [
-		{ key: 'bold', label: 'Bold', icon: Bold },
-		{ key: 'italic', label: 'Italic', icon: Italic },
-		{ key: 'underline', label: 'Underline', icon: Underline },
-		{ key: 'strike', label: 'Strike', icon: Strikethrough },
-		{ key: 'code', label: 'Code', icon: Code2 }
+		{ key: "bold", label: "Bold", icon: Bold },
+		{ key: "italic", label: "Italic", icon: Italic },
+		{ key: "underline", label: "Underline", icon: Underline },
+		{ key: "strike", label: "Strike", icon: Strikethrough },
+		{ key: "code", label: "Code", icon: Code2 },
 	];
 
 	let host = $state<HTMLElement | null>(null);
 	let titleElement = $state<HTMLDivElement | null>(null);
 	let editor = $state<Editor | null>(null);
 	let floatingToolbarElement = $state<HTMLDivElement | null>(null);
-	let cursorOverlays = $state<Array<{ clientId: string; name: string; color: string; left: number; top: number }>>([]);
+	let cursorOverlays = $state<
+		Array<{
+			clientId: string;
+			name: string;
+			color: string;
+			left: number;
+			top: number;
+		}>
+	>([]);
 	let formatting = $state<EditorFormattingState>(getEmptyFormattingState());
 	let isEditorFocused = $state(false);
 	let isFloatingToolbarHovered = $state(false);
@@ -70,7 +76,7 @@
 		}
 
 		const nextTitle = title.trim();
-		const currentTitle = (titleElement.textContent ?? '').trim();
+		const currentTitle = (titleElement.textContent ?? "").trim();
 		if (currentTitle !== nextTitle) {
 			titleElement.textContent = nextTitle;
 		}
@@ -104,7 +110,7 @@
 			onFocusChange(focused, currentEditor) {
 				isEditorFocused = focused;
 				syncEditorUi(currentEditor);
-			}
+			},
 		});
 
 		if (titleElement) {
@@ -117,14 +123,14 @@
 			rebuildCursorOverlays();
 			syncFloatingToolbar();
 		};
-		window.addEventListener('pointermove', handleWindowPointerMove);
-		window.addEventListener('resize', handleViewportChange);
-		host.addEventListener('scroll', handleViewportChange);
+		window.addEventListener("pointermove", handleWindowPointerMove);
+		window.addEventListener("resize", handleViewportChange);
+		host.addEventListener("scroll", handleViewportChange);
 
 		return () => {
-			window.removeEventListener('pointermove', handleWindowPointerMove);
-			window.removeEventListener('resize', handleViewportChange);
-			host?.removeEventListener('scroll', handleViewportChange);
+			window.removeEventListener("pointermove", handleWindowPointerMove);
+			window.removeEventListener("resize", handleViewportChange);
+			host?.removeEventListener("scroll", handleViewportChange);
 		};
 	});
 
@@ -144,16 +150,19 @@
 		const maxPosition = Math.max(currentEditor.state.doc.content.size, 1);
 
 		cursorOverlays = peers
-			.filter((peer: PeerPresence) => typeof peer.anchor === 'number')
+			.filter((peer: PeerPresence) => typeof peer.anchor === "number")
 			.map((peer: PeerPresence) => {
-				const position = Math.min(Math.max(peer.anchor ?? 1, 1), maxPosition);
+				const position = Math.min(
+					Math.max(peer.anchor ?? 1, 1),
+					maxPosition,
+				);
 				const coords = currentEditor.view.coordsAtPos(position);
 				return {
 					clientId: peer.clientId,
 					name: peer.name,
 					color: peer.color,
 					left: coords.left - rootBounds.left,
-					top: coords.top - rootBounds.top
+					top: coords.top - rootBounds.top,
 				};
 			});
 	}
@@ -186,12 +195,15 @@
 		const clampedLeft = clamp(
 			(caret.left + caret.right) / 2,
 			toolbarWidth / 2 + 12,
-			Math.max(toolbarWidth / 2 + 12, window.innerWidth - toolbarWidth / 2 - 12)
+			Math.max(
+				toolbarWidth / 2 + 12,
+				window.innerWidth - toolbarWidth / 2 - 12,
+			),
 		);
 
 		floatingToolbarPosition = {
 			left: clampedLeft,
-			top: Math.max(caret.top, 12)
+			top: Math.max(caret.top, 12),
 		};
 
 		if (isFloatingToolbarHovered) {
@@ -204,7 +216,10 @@
 
 	function getCaretCoordinates(currentEditor: Editor) {
 		const maxPosition = Math.max(currentEditor.state.doc.content.size, 1);
-		const head = Math.min(Math.max(currentEditor.state.selection.head, 1), maxPosition);
+		const head = Math.min(
+			Math.max(currentEditor.state.selection.head, 1),
+			maxPosition,
+		);
 
 		try {
 			return currentEditor.view.coordsAtPos(head);
@@ -213,15 +228,22 @@
 		}
 	}
 
-	function isPointerNearCaret(caret: { left: number; right: number; top: number; bottom: number }) {
+	function isPointerNearCaret(caret: {
+		left: number;
+		right: number;
+		top: number;
+		bottom: number;
+	}) {
 		if (!isEditorFocused || !lastPointerPosition) {
 			return false;
 		}
 
 		const pointerWithinHorizontalReach =
-			lastPointerPosition.x >= caret.left - 132 && lastPointerPosition.x <= caret.right + 132;
+			lastPointerPosition.x >= caret.left - 132 &&
+			lastPointerPosition.x <= caret.right + 132;
 		const pointerWithinVerticalReach =
-			lastPointerPosition.y >= caret.top - 144 && lastPointerPosition.y <= caret.bottom + 64;
+			lastPointerPosition.y >= caret.top - 144 &&
+			lastPointerPosition.y <= caret.bottom + 64;
 
 		return pointerWithinHorizontalReach && pointerWithinVerticalReach;
 	}
@@ -276,8 +298,8 @@
 			return;
 		}
 
-		const nextTitle = normalizeTitle(titleElement.textContent ?? '');
-		if ((titleElement.textContent ?? '') !== nextTitle) {
+		const nextTitle = normalizeTitle(titleElement.textContent ?? "");
+		if ((titleElement.textContent ?? "") !== nextTitle) {
 			titleElement.textContent = nextTitle;
 			placeCaretAtEnd(titleElement);
 		}
@@ -286,7 +308,7 @@
 	}
 
 	function handleTitleKeyDown(event: KeyboardEvent) {
-		if (event.key === 'Enter') {
+		if (event.key === "Enter") {
 			event.preventDefault();
 		}
 	}
@@ -303,7 +325,10 @@
 	}
 
 	function normalizeTitle(value: string): string {
-		return value.replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
+		return value
+			.replace(/[\r\n]+/g, " ")
+			.replace(/\s+/g, " ")
+			.trim();
 	}
 
 	function placeCaretAtEnd(element: HTMLElement) {
@@ -366,8 +391,14 @@
 				onpointerleave={handleEditorPointerLeave}
 			></div>
 			{#each cursorOverlays as overlay (overlay.clientId)}
-				<div class="remote-cursor" style={`left:${overlay.left}px;top:${overlay.top}px;color:${overlay.color};`}>
-					<span class="remote-cursor__label" style={`background:${overlay.color};`}>
+				<div
+					class="remote-cursor"
+					style={`left:${overlay.left}px;top:${overlay.top}px;color:${overlay.color};`}
+				>
+					<span
+						class="remote-cursor__label"
+						style={`background:${overlay.color};`}
+					>
 						{overlay.name}
 					</span>
 				</div>
@@ -460,13 +491,15 @@
 		border: 1px solid var(--line);
 		border-radius: 10px;
 		background: var(--dropdown-panel-bg, var(--panel));
-		box-shadow: var(--shadow);
+		box-shadow: none;
 		backdrop-filter: blur(16px);
 		pointer-events: none;
 		opacity: 0;
 		transform: translate(-50%, calc(-100% - 6px)) scale(0.96);
 		transform-origin: bottom center;
-		transition: opacity 140ms ease, transform 140ms ease;
+		transition:
+			opacity 140ms ease,
+			transform 140ms ease;
 	}
 
 	.floating-toolbar--visible {
@@ -487,7 +520,9 @@
 		background: transparent;
 		color: var(--text);
 		cursor: pointer;
-		transition: background 120ms ease, color 120ms ease;
+		transition:
+			background 120ms ease,
+			color 120ms ease;
 	}
 
 	.format-badge:hover,
@@ -553,7 +588,7 @@
 	}
 
 	:global(.doc-editor code) {
-		font-family: 'IBM Plex Mono', 'Cascadia Code', monospace;
+		font-family: "IBM Plex Mono", "Cascadia Code", monospace;
 		border-radius: 4px;
 		background: var(--surface-overlay-strong);
 	}
@@ -563,23 +598,23 @@
 		margin: 0;
 	}
 
-	:global(.doc-editor ul:not([data-type='taskList'])) {
+	:global(.doc-editor ul:not([data-type="taskList"])) {
 		list-style: none;
 		padding-left: 1.45rem;
 	}
 
-	:global(.doc-editor ul:not([data-type='taskList']) > li) {
+	:global(.doc-editor ul:not([data-type="taskList"]) > li) {
 		position: relative;
 	}
 
-	:global(.doc-editor ul:not([data-type='taskList']) > li + li),
+	:global(.doc-editor ul:not([data-type="taskList"]) > li + li),
 	:global(.doc-editor ol > li + li),
-	:global(.doc-editor ul[data-type='taskList'] li + li) {
+	:global(.doc-editor ul[data-type="taskList"] li + li) {
 		margin-top: 0.18rem;
 	}
 
-	:global(.doc-editor ul:not([data-type='taskList']) > li::before) {
-		content: '•';
+	:global(.doc-editor ul:not([data-type="taskList"]) > li::before) {
+		content: "•";
 		position: absolute;
 		left: -1rem;
 		top: 0;
@@ -587,18 +622,18 @@
 		color: currentColor;
 	}
 
-	:global(.doc-editor ul[data-type='taskList']) {
+	:global(.doc-editor ul[data-type="taskList"]) {
 		list-style: none;
 		padding: 0;
 	}
 
-	:global(.doc-editor ul[data-type='taskList'] li) {
+	:global(.doc-editor ul[data-type="taskList"] li) {
 		display: flex;
 		align-items: flex-start;
 		gap: 10px;
 	}
 
-	:global(.doc-editor ul[data-type='taskList'] li > label) {
+	:global(.doc-editor ul[data-type="taskList"] li > label) {
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
@@ -606,16 +641,22 @@
 		margin-top: calc(0.5rem);
 	}
 
-	:global(.doc-editor ul[data-type='taskList'] li > label input[type='checkbox']) {
+	:global(
+			.doc-editor
+				ul[data-type="taskList"]
+				li
+				> label
+				input[type="checkbox"]
+		) {
 		margin: 0;
 	}
 
-	:global(.doc-editor ul[data-type='taskList'] li > div) {
+	:global(.doc-editor ul[data-type="taskList"] li > div) {
 		flex: 1 1 auto;
 		min-width: 0;
 	}
 
-	:global(.doc-editor ul[data-type='taskList'] li > div > p:first-child) {
+	:global(.doc-editor ul[data-type="taskList"] li > div > p:first-child) {
 		margin-top: 0;
 	}
 

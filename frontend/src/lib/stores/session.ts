@@ -31,6 +31,26 @@ export async function ensureSessionProfile(): Promise<SessionProfile> {
 	return session;
 }
 
+export async function updateSessionProfileName(nextName: string): Promise<SessionProfile> {
+	const existing = await ensureSessionProfile();
+	const name = normalizeSessionName(nextName);
+	const session = {
+		...existing,
+		name,
+		color: palette[Math.abs(hashString(name)) % palette.length]
+	} satisfies SessionProfile;
+
+	if (browser) {
+		window.localStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+	}
+
+	return session;
+}
+
+function normalizeSessionName(value: string): string {
+	return (value.trim() || `Guest ${Math.floor(Math.random() * 90 + 10)}`).slice(0, 32);
+}
+
 function hashString(value: string): number {
 	let hash = 0;
 	for (const character of value) {

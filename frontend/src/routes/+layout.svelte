@@ -1,8 +1,12 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import "@fontsource/ibm-plex-sans/400.css";
+	import "@fontsource/ibm-plex-sans/500.css";
+	import "@fontsource/ibm-plex-sans/600.css";
+	import "@fontsource/ibm-plex-sans/700.css";
+	import { onMount } from "svelte";
 
-	import favicon from '$lib/assets/favicon.svg';
-	import { initializeTheme } from '$lib/stores/theme';
+	import favicon from "$lib/assets/favicon.svg";
+	import { initializeTheme } from "$lib/stores/theme";
 
 	let { children } = $props();
 
@@ -20,8 +24,7 @@
 
 <style>
 	:global(:root) {
-		font-family:
-			'IBM Plex Sans', 'Aptos', 'Segoe UI', sans-serif;
+		font-family: "IBM Plex Sans", "Aptos", "Segoe UI", sans-serif;
 		--hero-glow: rgba(224, 138, 74, 0.12);
 		--button-accent-border: rgba(229, 161, 109, 0.28);
 		--button-accent-contrast: #1a130f;
@@ -31,7 +34,7 @@
 		--blockquote-line: rgba(229, 161, 109, 0.4);
 	}
 
-	:global(:root[data-theme='dark']) {
+	:global(:root[data-theme="dark"]) {
 		color-scheme: dark;
 		--bg: #17171a;
 		--bg-elevated: #131416;
@@ -56,6 +59,7 @@
 		--success: #52d6a2;
 		--danger: #ff6b7a;
 		--shadow: 0 20px 48px rgba(0, 0, 0, 0.34);
+		--floating-toolbar-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
 		--page-bg-start: #151517;
 		--page-bg-end: #101113;
 		--hero-surface-start: rgba(28, 29, 33, 0.96);
@@ -66,7 +70,7 @@
 		--document-row-bg: rgba(255, 239, 226, 0.03);
 	}
 
-	:global(:root[data-theme='light']) {
+	:global(:root[data-theme="light"]) {
 		color-scheme: light;
 		--bg: #f3eee6;
 		--bg-elevated: #fcf8f2;
@@ -91,6 +95,7 @@
 		--success: #157f5b;
 		--danger: #c84c63;
 		--shadow: 0 20px 48px rgba(86, 65, 44, 0.14);
+		--floating-toolbar-shadow: 0 10px 24px rgba(86, 65, 44, 0.1);
 		--page-bg-start: #f7f2ea;
 		--page-bg-end: #ece2d6;
 		--hero-surface-start: rgba(255, 250, 243, 0.96);
@@ -110,7 +115,12 @@
 		margin: 0;
 		min-height: 100vh;
 		color: var(--text);
-		background: linear-gradient(180deg, var(--page-bg-start) 0%, var(--bg) 28%, var(--page-bg-end) 100%);
+		background: linear-gradient(
+			180deg,
+			var(--page-bg-start) 0%,
+			var(--bg) 28%,
+			var(--page-bg-end) 100%
+		);
 	}
 
 	:global(*) {

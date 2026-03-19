@@ -1,28 +1,26 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { onMount, tick } from 'svelte';
-	import { fade } from 'svelte/transition';
-	import { browser } from '$app/environment';
-	import {
-		ChevronDown,
-		Search,
-		Sun,
-		Moon,
-	} from 'lucide-svelte';
-	import * as Y from 'yjs';
+	import { goto } from "$app/navigation";
+	import { onMount, tick } from "svelte";
+	import { fade } from "svelte/transition";
+	import { browser } from "$app/environment";
+	import { ChevronDown, Search, Settings2, Sun, Moon } from "lucide-svelte";
+	import * as Y from "yjs";
 
-	import { listDocuments, renameDocumentTitle } from '$lib/api/documents';
-	import PresenceBar from '$lib/components/PresenceBar.svelte';
-	import EditorShell from '$lib/components/EditorShell.svelte';
-	import { RealtimeClient } from '$lib/realtime/client';
-	import { ensureSessionProfile } from '$lib/stores/session';
-	import { theme, toggleTheme } from '$lib/stores/theme';
+	import { listDocuments, renameDocumentTitle } from "$lib/api/documents";
+	import PresenceBar from "$lib/components/PresenceBar.svelte";
+	import EditorShell from "$lib/components/EditorShell.svelte";
+	import { RealtimeClient } from "$lib/realtime/client";
+	import {
+		ensureSessionProfile,
+		updateSessionProfileName,
+	} from "$lib/stores/session";
+	import { theme, toggleTheme } from "$lib/stores/theme";
 	import type {
 		DocumentRecord,
 		DocumentSummary,
 		PeerPresence,
-		SessionProfile
-	} from '$lib/types';
+		SessionProfile,
+	} from "$lib/types";
 
 	type SearchResult = {
 		document: DocumentSummary;
@@ -40,28 +38,33 @@
 	let document = $state<DocumentRecord | null>(null);
 	let session = $state<SessionProfile | null>(null);
 	let peers = $state<PeerPresence[]>([]);
-	let errorMessage = $state('');
+	let errorMessage = $state("");
 	let loading = $state(true);
 	let syncReady = $state(false);
-	let titleDraft = $state('');
+	let titleDraft = $state("");
 	let activeTopbarMenu = $state<string | null>(null);
 	let searchModalOpen = $state(false);
-	let searchQuery = $state('');
+	let searchQuery = $state("");
 	let searchResultsIndex = $state(0);
 	let searchDocuments = $state<DocumentSummary[] | null>(null);
 	let searchLoading = $state(false);
-	let searchErrorMessage = $state('');
+	let searchErrorMessage = $state("");
 	let searchInputElement = $state<HTMLInputElement | null>(null);
+	let usernameDraft = $state("");
+	let usernameSaving = $state(false);
+	let usernameErrorMessage = $state("");
 
 	const documentMenu = {
-		label: 'Document',
-		items: ['Rename', 'Duplicate', 'Export Markdown']
+		label: "Document",
+		items: ["Rename", "Duplicate", "Export Markdown"],
 	} as const;
 
 	const shareMenu = {
-		label: 'Share',
-		items: ['Invite collaborators', 'Copy share link', 'Publish snapshot']
+		label: "Share",
+		items: ["Invite collaborators", "Copy share link", "Publish snapshot"],
 	} as const;
+
+	const settingsMenuLabel = "Settings";
 
 	let ydoc = $state<Y.Doc>(new Y.Doc());
 	let client: RealtimeClient | null = null;
@@ -73,10 +76,13 @@
 			return;
 		}
 
-		window.addEventListener('pointerdown', handleDocumentPointerDown);
+		window.addEventListener("pointerdown", handleDocumentPointerDown);
 
 		return () => {
-			window.removeEventListener('pointerdown', handleDocumentPointerDown);
+			window.removeEventListener(
+				"pointerdown",
+				handleDocumentPointerDown,
+			);
 		};
 	});
 
@@ -113,7 +119,10 @@
 		searchResultsIndex = 0;
 	});
 
-	async function loadDocumentPage(documentId: string, isCancelled: () => boolean) {
+	async function loadDocumentPage(
+		documentId: string,
+		isCancelled: () => boolean,
+	) {
 		resetDocumentState();
 
 		const nextYdoc = new Y.Doc();
@@ -130,46 +139,36 @@
 			}
 
 			if (!initialDocument) {
-				errorMessage = initialError || 'Failed to open document';
+				errorMessage = initialError || "Failed to open document";
 				loading = false;
 				return;
 			}
 
 			session = nextSession;
+			usernameDraft = nextSession.name;
 			document = initialDocument;
 			titleDraft = initialDocument.title;
-			loading = false;
 
-			const nextClient = new RealtimeClient(documentId, nextSession, nextYdoc, {
-				onConnectionState() {},
-				onPresence(nextPeers) {
-					if (isCancelled()) {
-						return;
-					}
+			await connectRealtimeClient(
+				documentId,
+				nextSession,
+				nextYdoc,
+				isCancelled,
+			);
 
-					peers = nextPeers.filter((peer) => peer.clientId !== nextSession.clientId);
-				},
-				onInitialSync() {
-					if (isCancelled()) {
-						return;
-					}
-
-					syncReady = true;
-				}
-			});
-
-			client = nextClient;
-			await nextClient.connect();
+			if (!isCancelled()) {
+				loading = false;
+			}
 		} catch (error) {
 			if (isCancelled()) {
 				return;
 			}
 
-			errorMessage = error instanceof Error ? error.message : 'Failed to open document';
-		} finally {
-			if (!isCancelled()) {
-				loading = false;
-			}
+			errorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to open document";
+			loading = false;
 		}
 	}
 
@@ -190,10 +189,11 @@
 	function resetDocumentState() {
 		document = null;
 		peers = [];
-		errorMessage = '';
+		errorMessage = "";
 		loading = true;
 		syncReady = false;
-		titleDraft = '';
+		titleDraft = "";
+		usernameErrorMessage = "";
 		activeTopbarMenu = null;
 		closeSearchModal();
 	}
@@ -206,11 +206,47 @@
 		if (!sessionPromise) {
 			sessionPromise = ensureSessionProfile().then((profile) => {
 				session = profile;
+				usernameDraft = profile.name;
 				return profile;
 			});
 		}
 
 		return sessionPromise;
+	}
+
+	async function connectRealtimeClient(
+		documentId: string,
+		nextSession: SessionProfile,
+		targetDoc: Y.Doc,
+		isCancelled: () => boolean = () => false,
+	) {
+		const nextClient = new RealtimeClient(
+			documentId,
+			nextSession,
+			targetDoc,
+			{
+				onConnectionState() {},
+				onPresence(nextPeers) {
+					if (isCancelled()) {
+						return;
+					}
+
+					peers = nextPeers.filter(
+						(peer) => peer.clientId !== nextSession.clientId,
+					);
+				},
+				onInitialSync() {
+					if (isCancelled()) {
+						return;
+					}
+
+					syncReady = true;
+				},
+			},
+		);
+
+		client = nextClient;
+		await nextClient.connect();
 	}
 
 	function handleSelectionChange(anchor: number, head: number) {
@@ -233,29 +269,84 @@
 				const updated = await renameDocumentTitle(document.id, value);
 				document = { ...document, ...updated };
 			} catch (error) {
-				errorMessage = error instanceof Error ? error.message : 'Failed to rename document';
+				errorMessage =
+					error instanceof Error
+						? error.message
+						: "Failed to rename document";
 			}
 		}, 450);
 	}
 
-
 	function handleTopbarMenuToggle(label: string, isOpen: boolean) {
-		activeTopbarMenu = isOpen ? label : activeTopbarMenu === label ? null : activeTopbarMenu;
+		activeTopbarMenu = isOpen
+			? label
+			: activeTopbarMenu === label
+				? null
+				: activeTopbarMenu;
+
+		if (label === settingsMenuLabel && isOpen && session) {
+			usernameDraft = session.name;
+			usernameErrorMessage = "";
+		}
+	}
+
+	async function handleUsernameSubmit() {
+		if (!session || usernameSaving) {
+			return;
+		}
+
+		const nextName = usernameDraft.trim();
+		if (!nextName) {
+			usernameErrorMessage = "Username cannot be empty";
+			return;
+		}
+
+		if (nextName === session.name) {
+			activeTopbarMenu = null;
+			usernameErrorMessage = "";
+			return;
+		}
+
+		usernameSaving = true;
+		usernameErrorMessage = "";
+
+		try {
+			const nextSession = await updateSessionProfileName(nextName);
+			session = nextSession;
+			sessionPromise = Promise.resolve(nextSession);
+			usernameDraft = nextSession.name;
+
+			if (document) {
+				client?.disconnect();
+				client = null;
+				syncReady = false;
+				await connectRealtimeClient(data.id, nextSession, ydoc);
+			}
+
+			activeTopbarMenu = null;
+		} catch (error) {
+			usernameErrorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to update username";
+		} finally {
+			usernameSaving = false;
+		}
 	}
 
 	async function openSearchModal() {
 		activeTopbarMenu = null;
 		searchModalOpen = true;
-		searchQuery = '';
+		searchQuery = "";
 		searchResultsIndex = 0;
 		await ensureSearchDocumentsLoaded();
 	}
 
 	function closeSearchModal() {
 		searchModalOpen = false;
-		searchQuery = '';
+		searchQuery = "";
 		searchResultsIndex = 0;
-		searchErrorMessage = '';
+		searchErrorMessage = "";
 	}
 
 	async function ensureSearchDocumentsLoaded() {
@@ -264,11 +355,14 @@
 		}
 
 		searchLoading = true;
-		searchErrorMessage = '';
+		searchErrorMessage = "";
 		try {
 			searchDocuments = await listDocuments();
 		} catch (error) {
-			searchErrorMessage = error instanceof Error ? error.message : 'Failed to load documents';
+			searchErrorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to load documents";
 		} finally {
 			searchLoading = false;
 		}
@@ -283,7 +377,8 @@
 			.slice()
 			.sort(
 				(left, right) =>
-					new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()
+					new Date(right.updatedAt).getTime() -
+					new Date(left.updatedAt).getTime(),
 			)
 			.slice(0, 8)
 			.map((item, index) => ({ document: item, score: 100 - index }));
@@ -296,14 +391,20 @@
 		}
 
 		return getSearchableDocuments()
-			.map((item) => ({ document: item, score: getFuzzyMatchScore(item.title, query) }))
+			.map((item) => ({
+				document: item,
+				score: getFuzzyMatchScore(item.title, query),
+			}))
 			.filter((item) => item.score > Number.NEGATIVE_INFINITY)
 			.sort((left, right) => {
 				if (right.score !== left.score) {
 					return right.score - left.score;
 				}
 
-				return new Date(right.document.updatedAt).getTime() - new Date(left.document.updatedAt).getTime();
+				return (
+					new Date(right.document.updatedAt).getTime() -
+					new Date(left.document.updatedAt).getTime()
+				);
 			})
 			.slice(0, 8);
 	}
@@ -331,7 +432,10 @@
 				return Number.NEGATIVE_INFINITY;
 			}
 
-			score += previousMatchIndex >= 0 && matchIndex === previousMatchIndex + 1 ? 12 : 4;
+			score +=
+				previousMatchIndex >= 0 && matchIndex === previousMatchIndex + 1
+					? 12
+					: 4;
 			score -= matchIndex;
 			searchFrom = matchIndex + 1;
 			previousMatchIndex = matchIndex;
@@ -343,7 +447,7 @@
 	function handleSearchInputKeyDown(event: KeyboardEvent) {
 		const results = getSearchResults();
 
-		if (event.key === 'Escape') {
+		if (event.key === "Escape") {
 			event.preventDefault();
 			closeSearchModal();
 			return;
@@ -353,21 +457,24 @@
 			return;
 		}
 
-		if (event.key === 'ArrowDown') {
+		if (event.key === "ArrowDown") {
 			event.preventDefault();
 			searchResultsIndex = (searchResultsIndex + 1) % results.length;
 			return;
 		}
 
-		if (event.key === 'ArrowUp') {
+		if (event.key === "ArrowUp") {
 			event.preventDefault();
-			searchResultsIndex = (searchResultsIndex - 1 + results.length) % results.length;
+			searchResultsIndex =
+				(searchResultsIndex - 1 + results.length) % results.length;
 			return;
 		}
 
-		if (event.key === 'Enter') {
+		if (event.key === "Enter") {
 			event.preventDefault();
-			void openSearchResult(results[searchResultsIndex]?.document ?? null);
+			void openSearchResult(
+				results[searchResultsIndex]?.document ?? null,
+			);
 		}
 	}
 
@@ -396,20 +503,26 @@
 		}
 
 		const target = event.target;
-		if (!(target instanceof Element) || !target.closest('.dropdown-badge')) {
+		if (
+			!(target instanceof Element) ||
+			!target.closest(".dropdown-badge")
+		) {
 			activeTopbarMenu = null;
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>{document ? `${document.title} | Doc-it` : 'Loading | Doc-it'}</title>
+	<title>{document ? `${document.title} | Doc-it` : "Loading | Doc-it"}</title
+	>
 </svelte:head>
 
+<svelte:document onpointerdown={handleDocumentPointerDown} />
+
 <div class="editor-page">
-	<section class="editor-pane">
-		<div class="editor-content">
-			<header class="topbar">
+	<section class="editor-layout">
+		<aside class="side-rail side-rail--left">
+			<div class="side-rail__inner">
 				<div class="topbar-left">
 					{#if document}
 						<details
@@ -418,7 +531,8 @@
 							ontoggle={(event) =>
 								handleTopbarMenuToggle(
 									documentMenu.label,
-									(event.currentTarget as HTMLDetailsElement).open
+									(event.currentTarget as HTMLDetailsElement)
+										.open,
 								)}
 						>
 							<summary>
@@ -426,10 +540,16 @@
 								<ChevronDown size={14} strokeWidth={2.2} />
 							</summary>
 							<div class="dropdown-panel">
-								<p class="dropdown-label">Placeholder actions</p>
+								<p class="dropdown-label">
+									Placeholder actions
+								</p>
 								<div class="dropdown-items">
 									{#each documentMenu.items as item (item)}
-										<button type="button" class="dropdown-item" disabled>
+										<button
+											type="button"
+											class="dropdown-item"
+											disabled
+										>
 											{item}
 										</button>
 									{/each}
@@ -437,12 +557,20 @@
 							</div>
 						</details>
 					{:else}
-						<button type="button" class="menu-badge-button menu-badge-button--disabled" disabled>
+						<button
+							type="button"
+							class="menu-badge-button menu-badge-button--disabled"
+							disabled
+						>
 							<span>{documentMenu.label}</span>
 							<ChevronDown size={14} strokeWidth={2.2} />
 						</button>
 					{/if}
-					<button type="button" class="menu-badge-button" onclick={() => void openSearchModal()}>
+					<button
+						type="button"
+						class="menu-badge-button"
+						onclick={() => void openSearchModal()}
+					>
 						<span>Search</span>
 						<Search size={14} strokeWidth={2.2} />
 					</button>
@@ -450,128 +578,261 @@
 						type="button"
 						class="menu-badge-button menu-badge-button--icon"
 						onclick={toggleTheme}
-						aria-label={$theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-						title={$theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+						aria-label={$theme === "dark"
+							? "Switch to light theme"
+							: "Switch to dark theme"}
+						title={$theme === "dark"
+							? "Switch to light theme"
+							: "Switch to dark theme"}
 					>
-						{#if $theme === 'dark'}
+						{#if $theme === "dark"}
 							<Moon size={14} strokeWidth={2.2} />
 						{:else}
 							<Sun size={14} strokeWidth={2.2} />
 						{/if}
 					</button>
 				</div>
-				<div class="topbar-meta">
-					<PresenceBar {peers} />
-					{#if document}
-						<details
-							class="dropdown-badge dropdown-badge--right"
-							open={activeTopbarMenu === shareMenu.label}
-							ontoggle={(event) =>
-								handleTopbarMenuToggle(
-									shareMenu.label,
-									(event.currentTarget as HTMLDetailsElement).open
-								)}
+			</div>
+		</aside>
+
+		<section class="editor-pane">
+			<div class="editor-content">
+				{#if searchModalOpen}
+					<div
+						class="search-modal-layer"
+						transition:fade={{ duration: 120 }}
+					>
+						<button
+							type="button"
+							class="search-modal-backdrop"
+							aria-label="Close search"
+							onclick={closeSearchModal}
+						></button>
+						<div
+							class="search-modal"
+							role="dialog"
+							aria-modal="true"
+							aria-label="Search documents"
 						>
-							<summary>
-								<span>{shareMenu.label}</span>
-								<ChevronDown size={14} strokeWidth={2.2} />
-							</summary>
-							<div class="dropdown-panel">
-								<p class="dropdown-label">Placeholder actions</p>
-								<div class="dropdown-items">
-									{#each shareMenu.items as item (item)}
-										<button type="button" class="dropdown-item" disabled>
-											{item}
+							<div class="search-modal__input-wrap">
+								<Search size={16} strokeWidth={2.1} />
+								<input
+									bind:this={searchInputElement}
+									bind:value={searchQuery}
+									class="search-modal__input"
+									type="text"
+									placeholder="Search documents"
+									spellcheck="false"
+									autocomplete="off"
+									onkeydown={handleSearchInputKeyDown}
+								/>
+							</div>
+
+							{#if searchLoading}
+								<p class="search-modal__state">
+									Loading documents…
+								</p>
+							{:else if searchErrorMessage}
+								<p
+									class="search-modal__state search-modal__state--error"
+								>
+									{searchErrorMessage}
+								</p>
+							{:else if getSearchResults().length === 0}
+								<p class="search-modal__state">
+									No documents match that search.
+								</p>
+							{:else}
+								<div class="search-modal__results">
+									<p class="search-modal__label">
+										{searchQuery.trim()
+											? "Matching documents"
+											: "Recent documents"}
+									</p>
+									{#each getSearchResults() as result, index (result.document.id)}
+										<button
+											type="button"
+											class:selected={index ===
+												searchResultsIndex}
+											class="search-result"
+											onclick={() =>
+												void openSearchResult(
+													result.document,
+												)}
+											onmousemove={() => {
+												searchResultsIndex = index;
+											}}
+										>
+											<span class="search-result__title"
+												>{result.document.title ||
+													"Untitled"}</span
+											>
+											<span class="search-result__meta">
+												Updated {formatSearchUpdatedAt(
+													result.document.updatedAt,
+												)}
+											</span>
 										</button>
 									{/each}
 								</div>
-							</div>
-						</details>
-					{:else}
-						<button type="button" class="menu-badge-button menu-badge-button--disabled" disabled>
-							<span>{shareMenu.label}</span>
-							<ChevronDown size={14} strokeWidth={2.2} />
-						</button>
-					{/if}
-				</div>
-			</header>
-
-			{#if searchModalOpen}
-				<div class="search-modal-layer" transition:fade={{ duration: 120 }}>
-					<button
-						type="button"
-						class="search-modal-backdrop"
-						aria-label="Close search"
-						onclick={closeSearchModal}
-					></button>
-					<div class="search-modal" role="dialog" aria-modal="true" aria-label="Search documents">
-						<div class="search-modal__input-wrap">
-							<Search size={16} strokeWidth={2.1} />
-							<input
-								bind:this={searchInputElement}
-								bind:value={searchQuery}
-								class="search-modal__input"
-								type="text"
-								placeholder="Search documents"
-								spellcheck="false"
-								autocomplete="off"
-								onkeydown={handleSearchInputKeyDown}
-							/>
+							{/if}
 						</div>
+					</div>
+				{/if}
 
-						{#if searchLoading}
-							<p class="search-modal__state">Loading documents…</p>
-						{:else if searchErrorMessage}
-							<p class="search-modal__state search-modal__state--error">{searchErrorMessage}</p>
-						{:else if getSearchResults().length === 0}
-							<p class="search-modal__state">No documents match that search.</p>
-						{:else}
-							<div class="search-modal__results">
-								<p class="search-modal__label">{searchQuery.trim() ? 'Matching documents' : 'Recent documents'}</p>
-								{#each getSearchResults() as result, index (result.document.id)}
-									<button
-										type="button"
-										class:selected={index === searchResultsIndex}
-										class="search-result"
-										onclick={() => void openSearchResult(result.document)}
-										onmousemove={() => {
-											searchResultsIndex = index;
-										}}
+				{#if !loading && errorMessage}
+					<p class="status-card error">{errorMessage}</p>
+				{:else if !loading && document}
+					{#key data.id}
+						<EditorShell
+							title={titleDraft}
+							doc={ydoc}
+							{peers}
+							onTitleChange={handleTitleChange}
+							onSelectionChange={handleSelectionChange}
+						/>
+					{/key}
+				{/if}
+			</div>
+		</section>
+
+		<aside class="side-rail side-rail--right">
+			<div class="side-rail__inner side-rail__inner--right">
+				<div class="topbar-meta">
+					<PresenceBar {peers} />
+					<div class="side-rail__actions side-rail__actions--right">
+						{#if document}
+							<details
+								class="dropdown-badge dropdown-badge--right"
+								open={activeTopbarMenu === shareMenu.label}
+								ontoggle={(event) =>
+									handleTopbarMenuToggle(
+										shareMenu.label,
+										(
+											event.currentTarget as HTMLDetailsElement
+										).open,
+									)}
+							>
+								<summary>
+									<span>{shareMenu.label}</span>
+									<ChevronDown size={14} strokeWidth={2.2} />
+								</summary>
+								<div class="dropdown-panel">
+									<p class="dropdown-label">
+										Placeholder actions
+									</p>
+									<div class="dropdown-items">
+										{#each shareMenu.items as item (item)}
+											<button
+												type="button"
+												class="dropdown-item"
+												disabled
+											>
+												{item}
+											</button>
+										{/each}
+									</div>
+								</div>
+							</details>
+							{#if session}
+								<details
+									class="dropdown-badge dropdown-badge--right dropdown-badge--icon"
+									open={activeTopbarMenu ===
+										settingsMenuLabel}
+									ontoggle={(event) =>
+										handleTopbarMenuToggle(
+											settingsMenuLabel,
+											(
+												event.currentTarget as HTMLDetailsElement
+											).open,
+										)}
+								>
+									<summary
+										aria-label="Open settings"
+										title="Settings"
 									>
-										<span class="search-result__title">{result.document.title || 'Untitled'}</span>
-										<span class="search-result__meta">
-											Updated {formatSearchUpdatedAt(result.document.updatedAt)}
-										</span>
-									</button>
-								{/each}
-							</div>
+										<Settings2
+											size={14}
+											strokeWidth={2.2}
+										/>
+									</summary>
+									<div class="dropdown-panel settings-panel">
+										<p class="dropdown-label">Profile</p>
+										<form
+											class="settings-panel__form"
+											onsubmit={(event) => {
+												event.preventDefault();
+												void handleUsernameSubmit();
+											}}
+										>
+											<label
+												class="settings-panel__field"
+											>
+												<span
+													class="settings-panel__label"
+													>Username</span
+												>
+												<input
+													bind:value={usernameDraft}
+													class="settings-panel__input"
+													type="text"
+													maxlength="32"
+													autocomplete="nickname"
+													spellcheck="false"
+													placeholder="Guest"
+												/>
+											</label>
+											{#if usernameErrorMessage}
+												<p
+													class="settings-panel__error"
+												>
+													{usernameErrorMessage}
+												</p>
+											{/if}
+											<div
+												class="settings-panel__actions"
+											>
+												<button
+													type="submit"
+													class="settings-panel__submit"
+													disabled={usernameSaving}
+												>
+													{usernameSaving
+														? "Saving..."
+														: "Save"}
+												</button>
+											</div>
+										</form>
+									</div>
+								</details>
+							{/if}
+						{:else}
+							<button
+								type="button"
+								class="menu-badge-button menu-badge-button--disabled"
+								disabled
+							>
+								<span>{shareMenu.label}</span>
+								<ChevronDown size={14} strokeWidth={2.2} />
+							</button>
 						{/if}
 					</div>
 				</div>
-			{/if}
-
-			{#if !loading && errorMessage && !document}
-				<p class="status-card error">{errorMessage}</p>
-			{:else if !loading && document}
-				{#key data.id}
-					<EditorShell
-						title={titleDraft}
-						doc={ydoc}
-						{peers}
-						onTitleChange={handleTitleChange}
-						onSelectionChange={handleSelectionChange}
-					/>
-				{/key}
-			{/if}
-		</div>
+			</div>
+		</aside>
 	</section>
 </div>
 
 <style>
 	.editor-page {
 		padding: 0 0 28px;
-		--topbar-height: 64px;
-		--menu-badge-height: calc(1em + (var(--presence-chip-padding-y, 4px) * 2) + 2px);
+		--editor-column-width: 960px;
+		--editor-column-min-width: 840px;
+		--side-rail-min-width: 0px;
+		--side-rail-top-offset: 22px;
+		--menu-badge-height: calc(
+			1em + (var(--presence-chip-padding-y, 4px) * 2) + 2px
+		);
 		--presence-chip-padding-y: 4px;
 		--presence-chip-padding-x: 10px;
 		--presence-chip-font-size: 0.84rem;
@@ -579,10 +840,45 @@
 		--presence-swatch-size: 10px;
 	}
 
-	.editor-pane {
+	.editor-layout {
 		display: grid;
-		gap: 0;
+		grid-template-columns:
+			minmax(var(--side-rail-min-width), 1fr)
+			minmax(var(--editor-column-min-width), var(--editor-column-width))
+			minmax(var(--side-rail-min-width), 1fr);
+		gap: clamp(18px, 2.4vw, 36px);
+		align-items: start;
 		min-height: 100vh;
+		padding: 0 clamp(16px, 2vw, 28px);
+		box-sizing: border-box;
+	}
+
+	.side-rail {
+		min-width: 0;
+		align-self: stretch;
+	}
+
+	.side-rail__inner {
+		position: sticky;
+		top: var(--side-rail-top-offset);
+		display: grid;
+		gap: 14px;
+		align-content: start;
+		padding-top: 0;
+	}
+
+	.side-rail__inner--right {
+		justify-items: end;
+	}
+
+	.side-rail__actions {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 10px;
+	}
+
+	.side-rail__actions--right {
+		justify-content: flex-end;
 	}
 
 	.editor-content {
@@ -590,23 +886,16 @@
 		gap: 0;
 	}
 
-	.topbar {
-		position: sticky;
-		top: 0;
-		z-index: 30;
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: center;
-		gap: 12px;
-		height: var(--topbar-height);
-		box-sizing: border-box;
-		padding: 0 32px;
-		background: transparent;
+	.editor-pane {
+		width: 100%;
+		min-width: 0;
 	}
 
 	.topbar-left {
 		display: flex;
-		align-items: center;
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: flex-start;
 		gap: 10px;
 		min-width: 0;
 	}
@@ -632,7 +921,10 @@
 		font-size: var(--presence-chip-font-size, 0.84rem);
 		font-weight: 500;
 		cursor: pointer;
-		transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+		transition:
+			background 120ms ease,
+			border-color 120ms ease,
+			color 120ms ease;
 	}
 
 	.menu-badge-button {
@@ -643,6 +935,13 @@
 	}
 
 	.menu-badge-button--icon {
+		justify-content: center;
+		inline-size: var(--menu-badge-height);
+		padding: 0;
+		gap: 0;
+	}
+
+	.dropdown-badge--icon summary {
 		justify-content: center;
 		inline-size: var(--menu-badge-height);
 		padding: 0;
@@ -709,6 +1008,79 @@
 		gap: 6px;
 	}
 
+	.settings-panel {
+		min-width: 260px;
+	}
+
+	.settings-panel__form {
+		display: grid;
+		gap: 10px;
+	}
+
+	.settings-panel__field {
+		display: grid;
+		gap: 6px;
+	}
+
+	.settings-panel__label {
+		font-size: 0.8rem;
+		color: var(--muted);
+	}
+
+	.settings-panel__input {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		background: var(--surface-overlay);
+		color: var(--text);
+		outline: 0;
+		transition:
+			border-color 120ms ease,
+			background 120ms ease;
+	}
+
+	.settings-panel__input:focus {
+		border-color: var(--surface-overlay-border);
+		background: var(--surface-overlay-medium);
+	}
+
+	.settings-panel__actions {
+		display: flex;
+		justify-content: flex-end;
+	}
+
+	.settings-panel__submit {
+		padding: 9px 12px;
+		border: 1px solid var(--line);
+		border-radius: 12px;
+		background: var(--surface-overlay);
+		color: var(--text);
+		font-size: 0.82rem;
+		font-weight: 500;
+		cursor: pointer;
+		transition:
+			background 120ms ease,
+			border-color 120ms ease;
+	}
+
+	.settings-panel__submit:hover:not(:disabled),
+	.settings-panel__submit:focus-visible {
+		background: var(--surface-overlay-medium);
+		border-color: var(--surface-overlay-border);
+	}
+
+	.settings-panel__submit:disabled {
+		cursor: wait;
+		opacity: 0.72;
+	}
+
+	.settings-panel__error {
+		margin: 0;
+		font-size: 0.78rem;
+		color: var(--accent-strong);
+	}
+
 	.dropdown-item {
 		width: 100%;
 		padding: 10px 12px;
@@ -723,11 +1095,12 @@
 
 	.topbar-meta {
 		display: flex;
-		align-items: center;
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: flex-end;
 		justify-content: flex-end;
 		gap: 12px;
-		justify-self: end;
-		flex-shrink: 0;
+		min-width: 0;
 	}
 
 	.search-modal-layer {
@@ -736,7 +1109,7 @@
 		z-index: 80;
 		display: grid;
 		place-items: start center;
-		padding: 88px 16px 24px;
+		padding: 48px 16px 24px;
 	}
 
 	.search-modal-backdrop {
@@ -746,6 +1119,42 @@
 		padding: 0;
 		background: var(--modal-backdrop);
 		cursor: default;
+	}
+
+	.search-modal {
+		position: relative;
+		z-index: 1;
+		width: min(560px, 100%);
+		padding: 14px;
+		border: 1px solid var(--line);
+		border-radius: 22px;
+		background: var(--modal-bg);
+		box-shadow: var(--shadow);
+		backdrop-filter: blur(18px);
+	}
+
+	.search-modal__input-wrap {
+		display: grid;
+		grid-template-columns: auto minmax(0, 1fr);
+		align-items: center;
+		gap: 10px;
+		padding: 0 4px 12px;
+		border-bottom: 1px solid var(--line);
+		color: var(--muted);
+	}
+
+	.search-modal__input {
+		width: 100%;
+		padding: 10px 0;
+		border: 0;
+		outline: 0;
+		background: transparent;
+		color: var(--text);
+		font-size: 1rem;
+	}
+
+	.search-modal__input::placeholder {
+		color: var(--muted);
 	}
 
 	.search-modal__results {
@@ -784,7 +1193,9 @@
 		color: var(--text);
 		text-align: left;
 		cursor: pointer;
-		transition: background 120ms ease, border-color 120ms ease;
+		transition:
+			background 120ms ease,
+			border-color 120ms ease;
 	}
 
 	.search-result:hover,
@@ -814,31 +1225,58 @@
 		color: var(--accent-strong);
 	}
 
-	@media (max-width: 980px) {
-		.topbar {
+	@media (max-width: 1320px) {
+		.editor-page {
+			--editor-column-width: 920px;
+			--editor-column-min-width: 760px;
+		}
+	}
+
+	@media (max-width: 1180px) {
+		.editor-page {
+			--side-rail-top-offset: 16px;
+		}
+
+		.editor-layout {
+			grid-template-columns: minmax(0, 1fr);
+			gap: 18px;
 			padding-left: 16px;
 			padding-right: 16px;
-			grid-template-columns: minmax(0, 1fr) auto;
-			grid-template-areas:
-				'left meta';
-			height: auto;
-			padding-top: 10px;
-			padding-bottom: 10px;
+		}
+
+		.side-rail--left {
+			order: 1;
+		}
+
+		.side-rail--right {
+			order: 2;
+		}
+
+		.editor-pane {
+			order: 3;
+		}
+
+		.side-rail__inner {
+			position: static;
+			min-height: auto;
+			padding-top: 0;
+		}
+
+		.side-rail__inner--right {
+			justify-items: start;
 		}
 
 		.topbar-left {
-			grid-area: left;
-			overflow-x: auto;
-			scrollbar-width: none;
-		}
-
-		.topbar-left::-webkit-scrollbar {
-			display: none;
+			flex-direction: row;
+			flex-wrap: wrap;
 		}
 
 		.topbar-meta {
-			grid-area: meta;
-			justify-content: flex-end;
+			align-items: flex-start;
+		}
+
+		.side-rail__actions--right {
+			justify-content: flex-start;
 		}
 
 		.dropdown-panel {
@@ -854,7 +1292,6 @@
 
 	@media (min-resolution: 1.5dppx) {
 		.editor-page {
-			--topbar-height: 40px;
 			--presence-chip-padding-y: 5px;
 			--presence-chip-padding-x: 11px;
 			--presence-chip-font-size: 0.87rem;
@@ -864,7 +1301,6 @@
 
 	@media (min-resolution: 2dppx) {
 		.editor-page {
-			--topbar-height: 44px;
 			--presence-chip-padding-y: 6px;
 			--presence-chip-padding-x: 12px;
 			--presence-chip-font-size: 0.9rem;

@@ -33,7 +33,20 @@ type PresenceSnapshotMessage = {
 	};
 };
 
-type ServerMessage = JoinedMessage | SyncInitMessage | SyncUpdateMessage | PresenceSnapshotMessage;
+type ErrorMessage = {
+	type: 'error';
+	payload: {
+		code: string;
+		message: string;
+	};
+};
+
+type ServerMessage =
+	| JoinedMessage
+	| SyncInitMessage
+	| SyncUpdateMessage
+	| PresenceSnapshotMessage
+	| ErrorMessage;
 
 type ConnectionCallbacks = {
 	onConnectionState: (state: 'Connecting' | 'Connected' | 'Offline') => void;
@@ -41,12 +54,14 @@ type ConnectionCallbacks = {
 	onInitialSync: () => void;
 };
 
+const INITIAL_SYNC_TIMEOUT_MS = 8000;
+
 export class RealtimeClient {
 	private socket: WebSocket | null = null;
 	private disposed = false;
 	private heartbeatTimer: number | null = null;
 	private reconnectTimer: number | null = null;
-	private didResolveInitialConnect = false;
+	private didCompleteInitialSync = false;
 	private initialConnectSettled = false;
 	private syncReady = false;
 	private hasPendingLocalChanges = false;
@@ -85,11 +100,37 @@ export class RealtimeClient {
 		this.callbacks.onConnectionState('Connecting');
 		this.syncReady = false;
 		this.initialConnectSettled = false;
+		const awaitingInitialSync = !this.didCompleteInitialSync;
 
 		return new Promise((resolve, reject) => {
 			const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
 			const socket = new WebSocket(`${protocol}//${window.location.host}/api/documents/${this.documentId}/live`);
 			this.socket = socket;
+			let initialSyncTimer: number | null = null;
+
+			const settleInitialConnect = (callback: () => void) => {
+				if (this.initialConnectSettled || this.disposed) {
+					return;
+				}
+
+				this.initialConnectSettled = true;
+				if (initialSyncTimer) {
+					window.clearTimeout(initialSyncTimer);
+					initialSyncTimer = null;
+				}
+				callback();
+			};
+
+			if (awaitingInitialSync) {
+				initialSyncTimer = window.setTimeout(() => {
+					settleInitialConnect(() => {
+						if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
+							socket.close();
+						}
+						reject(new Error('Timed out waiting for the document sync handshake'));
+					});
+				}, INITIAL_SYNC_TIMEOUT_MS);
+			}
 
 			socket.addEventListener('open', () => {
 				this.callbacks.onConnectionState('Connected');
@@ -105,27 +146,44 @@ export class RealtimeClient {
 			});
 
 			socket.addEventListener('message', (event) => {
-				const message = JSON.parse(event.data) as ServerMessage;
-				this.handleMessage(message, resolve);
+				try {
+					const message = JSON.parse(event.data) as ServerMessage;
+					this.handleMessage(message, () => {
+						settleInitialConnect(resolve);
+					});
+				} catch (error) {
+					settleInitialConnect(() => {
+						reject(
+							new Error(
+								error instanceof Error
+									? error.message
+									: 'Failed to process the realtime response',
+							),
+						);
+					});
+					socket.close();
+				}
 			});
 
 			socket.addEventListener('error', () => {
-				if (!this.initialConnectSettled && !this.disposed) {
-					this.initialConnectSettled = true;
+				settleInitialConnect(() => {
 					reject(new Error('Failed to connect to document realtime service'));
-				}
+				});
 			});
 
 			socket.addEventListener('close', () => {
 				this.callbacks.onConnectionState('Offline');
 				this.stopHeartbeat();
-				if (!this.initialConnectSettled && !this.disposed) {
-					this.initialConnectSettled = true;
-					reject(new Error('Failed to open document realtime session'));
+				if (!this.initialConnectSettled) {
+					settleInitialConnect(() => {
+						reject(new Error('Failed to open document realtime session'));
+					});
 					return;
 				}
-				if (!this.disposed) {
-					this.reconnectTimer = window.setTimeout(() => this.connect(), 1500);
+				if (!this.disposed && this.didCompleteInitialSync) {
+					this.reconnectTimer = window.setTimeout(() => {
+						void this.connect().catch(() => undefined);
+					}, 1500);
 				}
 			});
 		});
@@ -176,13 +234,18 @@ export class RealtimeClient {
 		}
 	}
 
-	private handleMessage(message: ServerMessage, resolve: () => void) {
+	private handleMessage(message: ServerMessage, resolveInitialSync: () => void) {
+		if (message.type === 'error') {
+			throw new Error(message.payload.message);
+		}
+
 		if (message.type === 'sync_init') {
 			if (message.payload.update) {
 				Y.applyUpdate(this.ydoc, decodeUpdate(message.payload.update), this);
 			}
 
 			this.syncReady = true;
+			this.didCompleteInitialSync = true;
 
 			if (this.hasPendingLocalChanges) {
 				this.hasPendingLocalChanges = false;
@@ -196,11 +259,7 @@ export class RealtimeClient {
 			}
 
 			this.callbacks.onInitialSync();
-			if (!this.didResolveInitialConnect) {
-				this.didResolveInitialConnect = true;
-				this.initialConnectSettled = true;
-				resolve();
-			}
+			resolveInitialSync();
 			return;
 		}
 
