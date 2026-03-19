@@ -117,12 +117,16 @@
 		margin: 0;
 		min-height: 100vh;
 		color: var(--text);
-		background: linear-gradient(
-			180deg,
-			var(--page-bg-start) 0%,
-			var(--bg) 28%,
-			var(--page-bg-end) 100%
-		);
+		background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23noise)' opacity='0.028'/%3E%3C/svg%3E"),
+			linear-gradient(
+				180deg,
+				var(--page-bg-start) 0%,
+				var(--bg) 28%,
+				var(--page-bg-end) 100%
+			);
+		background-size:
+			180px 180px,
+			auto;
 	}
 
 	:global(*) {

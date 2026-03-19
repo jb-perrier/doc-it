@@ -627,11 +627,16 @@
 	}
 
 	.editor-stage {
-		transition: opacity 140ms ease;
+		transition:
+			opacity 160ms ease,
+			transform 160ms ease,
+			filter 160ms ease;
 	}
 
 	.editor-stage--hidden {
-		opacity: 0;
+		opacity: 0.28;
+		transform: scale(0.994);
+		filter: blur(14px);
 		pointer-events: none;
 		user-select: none;
 	}
