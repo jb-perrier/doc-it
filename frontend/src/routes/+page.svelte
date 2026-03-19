@@ -1,28 +1,68 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { goto } from "$app/navigation";
+	import { onMount } from "svelte";
+	import { Search, Sun, Moon, Plus } from "lucide-svelte";
 
-	import { createDocument, listDocuments } from '$lib/api/documents';
-	import DocumentList from '$lib/components/DocumentList.svelte';
-	import type { DocumentSummary } from '$lib/types';
+	import { createDocument, listDocuments } from "$lib/api/documents";
+	import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
+	import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
+	import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
+	import { getDocumentSearchResults } from "$lib/search/documents";
+	import {
+		ensureSessionProfile,
+		updateSessionProfileName,
+	} from "$lib/stores/session";
+	import { theme, toggleTheme } from "$lib/stores/theme";
+	import type { DocumentSummary, SessionProfile } from "$lib/types";
 
 	let documents = $state<DocumentSummary[]>([]);
+	let session = $state<SessionProfile | null>(null);
 	let loading = $state(true);
 	let creating = $state(false);
-	let errorMessage = $state('');
+	let errorMessage = $state("");
+	let searchQuery = $state("");
+	let searchResultsIndex = $state(0);
+	let activeTopbarMenu = $state<string | null>(null);
+	let usernameDraft = $state("");
+	let usernameSaving = $state(false);
+	let usernameErrorMessage = $state("");
+
+	const settingsMenuLabel = "Settings";
+
+	$effect(() => {
+		searchQuery;
+		searchResultsIndex = 0;
+	});
 
 	onMount(async () => {
 		await refreshDocuments();
 	});
 
+	function handlePagePointerDown(event: PointerEvent) {
+		if (!activeTopbarMenu) {
+			return;
+		}
+
+		const target = event.target;
+		if (
+			!(target instanceof Element) ||
+			!target.closest(".dropdown-badge")
+		) {
+			activeTopbarMenu = null;
+		}
+	}
+
 	async function refreshDocuments() {
 		loading = true;
-		errorMessage = '';
+		errorMessage = "";
 
 		try {
 			documents = await listDocuments();
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to load documents';
+			errorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to load documents";
 		} finally {
 			loading = false;
 		}
@@ -31,128 +71,196 @@
 	async function handleCreate() {
 		creating = true;
 		try {
-			const document = await createDocument('Untitled');
+			const document = await createDocument("Untitled");
 			await goto(`/d/${document.id}`);
 		} catch (error) {
-			errorMessage = error instanceof Error ? error.message : 'Failed to create document';
+			errorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to create document";
 			creating = false;
+		}
+	}
+
+	function getSearchResults() {
+		return getDocumentSearchResults(documents, searchQuery);
+	}
+
+	function handleSearchQueryChange(value: string) {
+		searchQuery = value;
+	}
+
+	function handleSearchResultHover(index: number) {
+		searchResultsIndex = index;
+	}
+
+	function handleSearchInputKeyDown(event: KeyboardEvent) {
+		const results = getSearchResults();
+
+		if (event.key === "Escape") {
+			event.preventDefault();
+			searchQuery = "";
+			return;
+		}
+
+		if (results.length === 0) {
+			return;
+		}
+
+		if (event.key === "ArrowDown") {
+			event.preventDefault();
+			searchResultsIndex = (searchResultsIndex + 1) % results.length;
+			return;
+		}
+
+		if (event.key === "ArrowUp") {
+			event.preventDefault();
+			searchResultsIndex =
+				(searchResultsIndex - 1 + results.length) % results.length;
+			return;
+		}
+
+		if (event.key === "Enter") {
+			event.preventDefault();
+			const target = results[searchResultsIndex]?.document;
+			if (target) {
+				void goto(`/d/${target.id}`);
+			}
+		}
+	}
+
+	async function handleTopbarMenuToggle(label: string, isOpen: boolean) {
+		activeTopbarMenu = isOpen
+			? label
+			: activeTopbarMenu === label
+				? null
+				: activeTopbarMenu;
+
+		if (label === settingsMenuLabel && isOpen) {
+			const nextSession = session ?? (await ensureSessionProfile());
+			session = nextSession;
+			usernameDraft = nextSession.name;
+			usernameErrorMessage = "";
+		}
+	}
+
+	function handleUsernameDraftChange(value: string) {
+		usernameDraft = value;
+	}
+
+	async function handleUsernameSubmit() {
+		if (!session || usernameSaving) {
+			return;
+		}
+
+		const nextName = usernameDraft.trim();
+		if (!nextName) {
+			usernameErrorMessage = "Username cannot be empty";
+			return;
+		}
+
+		if (nextName === session.name) {
+			activeTopbarMenu = null;
+			usernameErrorMessage = "";
+			return;
+		}
+
+		usernameSaving = true;
+		usernameErrorMessage = "";
+
+		try {
+			const nextSession = await updateSessionProfileName(nextName);
+			session = nextSession;
+			usernameDraft = nextSession.name;
+			activeTopbarMenu = null;
+		} catch (error) {
+			usernameErrorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to update username";
+		} finally {
+			usernameSaving = false;
 		}
 	}
 </script>
 
 <svelte:head>
-	<title>Doc-it | Documents</title>
+	<title>Doc-it | Search</title>
 </svelte:head>
 
-<div class="page-shell">
-	<section class="hero-card">
-		<div>
-			<p class="eyebrow">Realtime Markdown-backed docs</p>
-			<h1>Write in a calm space. Sync in realtime.</h1>
-			<p class="lede">
-				Create lightweight collaborative documents with a focused editor, live presence, and
-				automatic persistence.
-			</p>
+<svelte:document onpointerdown={handlePagePointerDown} />
+
+<WorkspaceShell>
+	{#snippet leftRail()}
+		<div class="topbar-left">
+			<button
+				type="button"
+				class="menu-badge-button"
+				onclick={handleCreate}
+				disabled={creating}
+			>
+				<span>{creating ? "Creating..." : "New document"}</span>
+				<Plus size={14} strokeWidth={2.2} />
+			</button>
 		</div>
-		<button class="primary-action" onclick={handleCreate} disabled={creating}>
-			{creating ? 'Creating…' : 'Create document'}
-		</button>
-	</section>
+	{/snippet}
 
-	<DocumentList {documents} {loading} {creating} onCreate={handleCreate} />
+	{#snippet stage()}
+		{#snippet searchInputLeading()}
+			<Search size={18} strokeWidth={2.1} />
+		{/snippet}
 
-	{#if errorMessage}
-		<p class="error-banner">{errorMessage}</p>
-	{/if}
-</div>
+		<DocumentSearchWorkspace
+			query={searchQuery}
+			results={getSearchResults()}
+			selectedIndex={searchResultsIndex}
+			{loading}
+			{errorMessage}
+			inputLeading={searchInputLeading}
+			onQueryChange={handleSearchQueryChange}
+			onKeyDown={handleSearchInputKeyDown}
+			onOpenResult={(target) => goto(`/d/${target.id}`)}
+			onHoverResult={handleSearchResultHover}
+		/>
+	{/snippet}
+
+	{#snippet rightRail()}
+		<div class="topbar-meta">
+			<div class="side-rail__actions side-rail__actions--right">
+				<button
+					type="button"
+					class="menu-badge-button menu-badge-button--icon"
+					onclick={toggleTheme}
+					aria-label={$theme === "dark"
+						? "Switch to light theme"
+						: "Switch to dark theme"}
+					title={$theme === "dark"
+						? "Switch to light theme"
+						: "Switch to dark theme"}
+				>
+					{#if $theme === "dark"}
+						<Moon size={14} strokeWidth={2.2} />
+					{:else}
+						<Sun size={14} strokeWidth={2.2} />
+					{/if}
+				</button>
+				<ProfileSettingsMenu
+					open={activeTopbarMenu === settingsMenuLabel}
+					onToggle={(isOpen) =>
+						void handleTopbarMenuToggle(settingsMenuLabel, isOpen)}
+					username={usernameDraft}
+					saving={usernameSaving}
+					errorMessage={usernameErrorMessage}
+					onUsernameInput={handleUsernameDraftChange}
+					onSubmit={() => void handleUsernameSubmit()}
+				/>
+			</div>
+		</div>
+	{/snippet}
+</WorkspaceShell>
 
 <style>
-	.page-shell {
-		max-width: 1120px;
-		margin: 0 auto;
-		padding: 48px 20px 64px;
-		display: grid;
-		gap: 28px;
-	}
-
-	.hero-card {
-		display: flex;
-		justify-content: space-between;
-		gap: 24px;
-		align-items: end;
-		padding: 32px;
-		border: 1px solid var(--line);
-		border-radius: 28px;
-		background:
-			radial-gradient(circle at top left, var(--hero-glow), transparent 34%),
-			linear-gradient(135deg, var(--hero-surface-start), var(--hero-surface-end));
-		box-shadow: var(--shadow);
-	}
-
-	.eyebrow {
-		margin: 0 0 10px;
-		text-transform: uppercase;
-		letter-spacing: 0.16em;
-		font-size: 0.72rem;
-		color: var(--accent-strong);
-	}
-
-	h1 {
-		margin: 0;
-		max-width: 12ch;
-		font-size: clamp(2.6rem, 8vw, 4.8rem);
-		line-height: 0.92;
-		letter-spacing: -0.05em;
-	}
-
-	.lede {
-		margin: 16px 0 0;
-		max-width: 54ch;
-		font-size: 1.05rem;
-		line-height: 1.6;
-		color: var(--muted);
-	}
-
-	.primary-action {
-		border: 1px solid var(--button-accent-border);
-		border-radius: 999px;
-		padding: 14px 22px;
-		background: var(--accent);
-		color: var(--button-accent-contrast);
-		font-weight: 600;
-		cursor: pointer;
-		transition:
-			transform 160ms ease,
-			background 160ms ease;
-	}
-
-	.primary-action:hover:not(:disabled) {
-		transform: translateY(-1px);
-		background: var(--accent-strong);
-	}
-
-	.primary-action:disabled {
-		opacity: 0.6;
+	:global(.menu-badge-button:disabled) {
 		cursor: wait;
-	}
-
-	.error-banner {
-		margin: 0;
-		padding: 12px 16px;
-		border-radius: 16px;
-		background: var(--danger-soft);
-		border: 1px solid var(--danger-border);
-		color: var(--accent-strong);
-	}
-
-	@media (max-width: 820px) {
-		.hero-card {
-			flex-direction: column;
-			align-items: start;
-		}
-
-		h1 {
-			max-width: none;
-		}
 	}
 </style>
