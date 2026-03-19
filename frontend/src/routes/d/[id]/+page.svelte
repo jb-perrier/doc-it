@@ -434,17 +434,13 @@
 			return;
 		}
 
-		closeSearchMode({ restoreScroll: false });
-
 		if (target.id === data.id) {
+			closeSearchMode({ restoreScroll: false });
 			return;
 		}
 
-		loading = true;
-		errorMessage = "";
-		document = null;
-
 		await goto(`/d/${target.id}`);
+		closeSearchMode({ restoreScroll: false });
 	}
 
 	function handleDocumentPointerDown(event: PointerEvent) {
@@ -546,11 +542,9 @@
 				/>
 			{:else}
 				<div class="editor-stage">
-					{#if loading}
-						<p class="status-card">Opening document…</p>
-					{:else if errorMessage}
+					{#if !loading && errorMessage}
 						<p class="status-card error">{errorMessage}</p>
-					{:else if document}
+					{:else if !loading && document}
 						{#key data.id}
 							<EditorShell
 								title={titleDraft}
