@@ -172,7 +172,7 @@ mod tests {
 
         let db = Database::new(pool);
         let document = db
-            .create_document("Handshake test")
+            .create_document("Handshake test", None)
             .await
             .expect("create document");
         let rooms = RoomManager::new(db.clone());

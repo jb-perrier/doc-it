@@ -11,17 +11,27 @@ use crate::{
     },
 };
 
+use super::folders::DEFAULT_FOLDER_ID;
+
 const COLLAB_FIELD: &str = "content";
 
 impl Database {
-    pub async fn list_documents(&self) -> Result<Vec<DocumentListItem>, sqlx::Error> {
+    pub async fn list_documents(
+        &self,
+        folder_id: Option<&str>,
+    ) -> Result<Vec<DocumentListItem>, sqlx::Error> {
         let rows = sqlx::query(
             r#"
-            SELECT id, title, created_at, updated_at
+            SELECT id, COALESCE(folder_id, ?) AS folder_id, title, created_at, updated_at
             FROM documents
+            WHERE (? IS NULL OR COALESCE(folder_id, ?) = ?)
             ORDER BY updated_at DESC
             "#,
         )
+        .bind(DEFAULT_FOLDER_ID)
+        .bind(folder_id)
+        .bind(DEFAULT_FOLDER_ID)
+        .bind(folder_id)
         .fetch_all(self.pool())
         .await?;
 
@@ -29,6 +39,7 @@ impl Database {
             .into_iter()
             .map(|row| DocumentListItem {
                 id: row.get("id"),
+                folder_id: row.get("folder_id"),
                 title: row.get("title"),
                 created_at: row.get("created_at"),
                 updated_at: row.get("updated_at"),
@@ -36,20 +47,26 @@ impl Database {
             .collect())
     }
 
-    pub async fn create_document(&self, title: &str) -> Result<DocumentRow, sqlx::Error> {
+    pub async fn create_document(
+        &self,
+        title: &str,
+        folder_id: Option<&str>,
+    ) -> Result<DocumentRow, sqlx::Error> {
         let now = iso_now();
         let document_id = Uuid::now_v7().to_string();
+        let folder_id = folder_id.unwrap_or(DEFAULT_FOLDER_ID).to_string();
         let title = sanitize_title(title);
         let initial_snapshot = empty_snapshot();
         let mut tx = self.pool().begin().await?;
 
         sqlx::query(
             r#"
-            INSERT INTO documents (id, title, created_at, updated_at)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO documents (id, folder_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
             "#,
         )
         .bind(&document_id)
+        .bind(&folder_id)
         .bind(&title)
         .bind(&now)
         .bind(&now)
@@ -72,26 +89,32 @@ impl Database {
 
         Ok(DocumentRow {
             id: document_id,
+            folder_id,
             title,
             created_at: now.clone(),
             updated_at: now,
         })
     }
 
-    pub async fn get_document(&self, document_id: &str) -> Result<Option<DocumentRow>, sqlx::Error> {
+    pub async fn get_document(
+        &self,
+        document_id: &str,
+    ) -> Result<Option<DocumentRow>, sqlx::Error> {
         let row = sqlx::query(
             r#"
-            SELECT id, title, created_at, updated_at
+            SELECT id, COALESCE(folder_id, ?) AS folder_id, title, created_at, updated_at
             FROM documents
             WHERE id = ?
             "#,
         )
+        .bind(DEFAULT_FOLDER_ID)
         .bind(document_id)
         .fetch_optional(self.pool())
         .await?;
 
         Ok(row.map(|row| DocumentRow {
             id: row.get("id"),
+            folder_id: row.get("folder_id"),
             title: row.get("title"),
             created_at: row.get("created_at"),
             updated_at: row.get("updated_at"),
@@ -122,11 +145,58 @@ impl Database {
             return Ok(None);
         }
 
+        let folder_id = row_folder_id(self, document_id).await?;
+
         Ok(Some(DocumentPayload {
             id: document_id.to_string(),
+            folder_id,
             title,
             created_at: None,
             updated_at: now,
+        }))
+    }
+
+    pub async fn move_document_to_folder(
+        &self,
+        document_id: &str,
+        folder_id: &str,
+    ) -> Result<Option<DocumentPayload>, sqlx::Error> {
+        let now = iso_now();
+        let result = sqlx::query(
+            r#"
+            UPDATE documents
+            SET folder_id = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        )
+        .bind(folder_id)
+        .bind(&now)
+        .bind(document_id)
+        .execute(self.pool())
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Ok(None);
+        }
+
+        let row = sqlx::query(
+            r#"
+            SELECT id, COALESCE(folder_id, ?) AS folder_id, title, created_at, updated_at
+            FROM documents
+            WHERE id = ?
+            "#,
+        )
+        .bind(DEFAULT_FOLDER_ID)
+        .bind(document_id)
+        .fetch_one(self.pool())
+        .await?;
+
+        Ok(Some(DocumentPayload {
+            id: row.get("id"),
+            folder_id: row.get("folder_id"),
+            title: row.get("title"),
+            created_at: Some(row.get("created_at")),
+            updated_at: row.get("updated_at"),
         }))
     }
 
@@ -136,6 +206,7 @@ impl Database {
             r#"
             SELECT
                 d.id,
+                COALESCE(d.folder_id, ?) AS folder_id,
                 d.title,
                 d.created_at AS document_created_at,
                 d.updated_at,
@@ -145,6 +216,7 @@ impl Database {
             WHERE d.id = ?
             "#,
         )
+        .bind(DEFAULT_FOLDER_ID)
         .bind(fallback_snapshot)
         .bind(document_id)
         .fetch_optional(self.pool())
@@ -153,6 +225,7 @@ impl Database {
         Ok(row.map(|row| RoomSeed {
             document: DocumentRow {
                 id: row.get("id"),
+                folder_id: row.get("folder_id"),
                 title: row.get("title"),
                 created_at: row.get("document_created_at"),
                 updated_at: row.get("updated_at"),
@@ -208,6 +281,16 @@ impl Database {
     }
 }
 
+async fn row_folder_id(db: &Database, document_id: &str) -> Result<String, sqlx::Error> {
+    let row = sqlx::query("SELECT COALESCE(folder_id, ?) AS folder_id FROM documents WHERE id = ?")
+        .bind(DEFAULT_FOLDER_ID)
+        .bind(document_id)
+        .fetch_one(db.pool())
+        .await?;
+
+    Ok(row.get("folder_id"))
+}
+
 fn sanitize_title(title: &str) -> String {
     let trimmed = title.trim();
     if trimmed.is_empty() {
@@ -230,13 +313,13 @@ fn empty_snapshot() -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use sqlx::{sqlite::SqlitePoolOptions, Row, SqlitePool};
+    use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
     use yrs::{
-        updates::decoder::Decode, Doc, ReadTxn, StateVector, Transact, Update, XmlFragment,
-        XmlTextPrelim,
+        Doc, ReadTxn, StateVector, Transact, Update, XmlFragment, XmlTextPrelim,
+        updates::decoder::Decode,
     };
 
-    use crate::db::{documents::COLLAB_FIELD, migrations::run_migrations, Database};
+    use crate::db::{Database, documents::COLLAB_FIELD, migrations::run_migrations};
 
     async fn test_db() -> SqlitePool {
         let pool = SqlitePoolOptions::new()
@@ -261,7 +344,10 @@ mod tests {
         let pool = test_db().await;
         let db = Database::new(pool.clone());
 
-        let document = db.create_document("New doc").await.expect("create document");
+        let document = db
+            .create_document("New doc", None)
+            .await
+            .expect("create document");
         let seed = db
             .load_room_seed(&document.id)
             .await
@@ -269,6 +355,7 @@ mod tests {
             .expect("room seed exists");
 
         assert_eq!(seed.document.id, document.id);
+        assert_eq!(seed.document.folder_id, super::DEFAULT_FOLDER_ID);
 
         let restored = Doc::new();
         let update = Update::decode_v1(&seed.snapshot.yjs_snapshot).expect("decode snapshot");
@@ -289,36 +376,40 @@ mod tests {
     async fn persist_room_state_keeps_single_latest_snapshot() {
         let pool = test_db().await;
         let db = Database::new(pool.clone());
-        let document = db.create_document("Snapshot doc").await.expect("create document");
+        let document = db
+            .create_document("Snapshot doc", None)
+            .await
+            .expect("create document");
 
         let first = snapshot_with_text("first");
         let second = snapshot_with_text("second");
 
-        assert!(db
-            .persist_room_state(&document.id, &first)
-            .await
-            .expect("persist first snapshot"));
-        assert!(db
-            .persist_room_state(&document.id, &second)
-            .await
-            .expect("persist second snapshot"));
+        assert!(
+            db.persist_room_state(&document.id, &first)
+                .await
+                .expect("persist first snapshot")
+        );
+        assert!(
+            db.persist_room_state(&document.id, &second)
+                .await
+                .expect("persist second snapshot")
+        );
 
-        let row = sqlx::query(
-            "SELECT yjs_snapshot FROM document_snapshots WHERE document_id = ?",
-        )
-        .bind(&document.id)
-        .fetch_one(&pool)
-        .await
-        .expect("load snapshot row");
+        let row = sqlx::query("SELECT yjs_snapshot FROM document_snapshots WHERE document_id = ?")
+            .bind(&document.id)
+            .fetch_one(&pool)
+            .await
+            .expect("load snapshot row");
 
         let stored: Vec<u8> = row.get("yjs_snapshot");
         assert_eq!(stored, second);
 
-        let snapshot_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM document_snapshots WHERE document_id = ?")
-            .bind(&document.id)
-            .fetch_one(&pool)
-            .await
-            .expect("count per document");
+        let snapshot_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM document_snapshots WHERE document_id = ?")
+                .bind(&document.id)
+                .fetch_one(&pool)
+                .await
+                .expect("count per document");
         assert_eq!(snapshot_count, 1);
     }
 
@@ -346,6 +437,34 @@ mod tests {
             .expect("room seed exists");
 
         assert_eq!(seed.document.id, "legacy-doc");
+        assert_eq!(seed.document.folder_id, super::DEFAULT_FOLDER_ID);
         assert!(!seed.snapshot.yjs_snapshot.is_empty());
+    }
+
+    #[tokio::test]
+    async fn move_document_updates_folder() {
+        let pool = test_db().await;
+        let db = Database::new(pool);
+
+        let parent = db
+            .create_folder("Projects", None)
+            .await
+            .expect("create folder");
+        let child = db
+            .create_folder("Q2", Some(&parent.id))
+            .await
+            .expect("create nested folder");
+        let document = db
+            .create_document("Planning", None)
+            .await
+            .expect("create document");
+
+        let moved = db
+            .move_document_to_folder(&document.id, &child.id)
+            .await
+            .expect("move document")
+            .expect("document exists");
+
+        assert_eq!(moved.folder_id, child.id);
     }
 }

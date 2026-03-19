@@ -2,6 +2,7 @@ import type { DocumentRecord, DocumentSummary } from '$lib/types';
 
 type DocumentPayload = {
 	id: string;
+	folderId: string;
 	title: string;
 	updatedAt: string;
 	createdAt?: string;
@@ -24,19 +25,25 @@ type ErrorEnvelope = {
 
 const API_BASE = '/api';
 
-export async function listDocuments(): Promise<DocumentSummary[]> {
-	const response = await fetch(`${API_BASE}/documents`);
+export async function listDocuments(options: { folderId?: string } = {}): Promise<DocumentSummary[]> {
+	const search = new URLSearchParams();
+	if (options.folderId) {
+		search.set('folderId', options.folderId);
+	}
+
+	const suffix = search.size > 0 ? `?${search.toString()}` : '';
+	const response = await fetch(`${API_BASE}/documents${suffix}`);
 	const payload = (await parseJson(response)) as DocumentListResponse;
 	return payload.documents.map(mapDocumentSummary);
 }
 
-export async function createDocument(title: string): Promise<DocumentRecord> {
+export async function createDocument(title: string, folderId?: string): Promise<DocumentRecord> {
 	const response = await fetch(`${API_BASE}/documents`, {
 		method: 'POST',
 		headers: {
 			'content-type': 'application/json'
 		},
-		body: JSON.stringify({ title })
+		body: JSON.stringify({ title, folderId })
 	});
 
 	const payload = (await parseJson(response)) as DocumentResponse;
@@ -62,6 +69,22 @@ export async function renameDocumentTitle(documentId: string, title: string): Pr
 	return mapDocumentSummary(payload.document);
 }
 
+export async function moveDocumentToFolder(
+	documentId: string,
+	folderId: string
+): Promise<DocumentRecord> {
+	const response = await fetch(`${API_BASE}/documents/${documentId}/folder`, {
+		method: 'PATCH',
+		headers: {
+			'content-type': 'application/json'
+		},
+		body: JSON.stringify({ folderId })
+	});
+
+	const payload = (await parseJson(response)) as DocumentResponse;
+	return mapDocumentRecord(payload.document);
+}
+
 async function parseJson(response: Response) {
 	const payload = (await response.json()) as unknown;
 	if (!response.ok) {
@@ -75,6 +98,7 @@ async function parseJson(response: Response) {
 function mapDocumentSummary(payload: DocumentPayload): DocumentSummary {
 	return {
 		id: payload.id,
+		folderId: payload.folderId,
 		title: payload.title,
 		updatedAt: payload.updatedAt,
 		createdAt: payload.createdAt ?? payload.updatedAt

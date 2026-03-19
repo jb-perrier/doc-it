@@ -1,4 +1,5 @@
 pub mod documents;
+pub mod folders;
 pub mod migrations;
 
 use sqlx::SqlitePool;

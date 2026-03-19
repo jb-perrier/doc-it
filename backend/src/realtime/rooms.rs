@@ -418,7 +418,7 @@ mod tests {
         let db = test_db().await;
         let manager = RoomManager::new(db.clone());
         let document = db
-            .create_document("Room eviction")
+            .create_document("Room eviction", None)
             .await
             .expect("create document");
 

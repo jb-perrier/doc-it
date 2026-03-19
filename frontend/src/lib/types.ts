@@ -1,11 +1,20 @@
 export type DocumentSummary = {
 	id: string;
+	folderId: string;
 	title: string;
 	updatedAt: string;
 	createdAt: string;
 };
 
 export type DocumentRecord = DocumentSummary;
+
+export type FolderSummary = {
+	id: string;
+	parentFolderId: string | null;
+	name: string;
+	createdAt: string;
+	updatedAt: string;
+};
 
 export type SessionProfile = {
 	clientId: string;

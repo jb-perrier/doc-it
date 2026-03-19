@@ -7,9 +7,9 @@ mod routes;
 use std::{env, net::SocketAddr, str::FromStr, sync::Arc};
 
 use app_state::AppState;
-use axum::{routing::get, Router};
-use db::{migrations::run_migrations, Database};
-use routes::{documents, websocket};
+use axum::{Router, routing::get};
+use db::{Database, migrations::run_migrations};
+use routes::{documents, folders, websocket};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use tracing::info;
@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let api = Router::new()
         .merge(documents::router())
+        .merge(folders::router())
         .merge(websocket::router());
 
     let app = Router::new()

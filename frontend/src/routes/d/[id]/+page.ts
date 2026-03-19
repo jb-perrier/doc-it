@@ -4,6 +4,7 @@ import type { PageLoad } from './$types';
 
 type DocumentPayload = {
 	id: string;
+	folderId: string;
 	title: string;
 	updatedAt: string;
 	createdAt?: string;
@@ -47,6 +48,7 @@ export const load: PageLoad = async ({ params, fetch }) => {
 function mapDocumentRecord(payload: DocumentPayload): DocumentRecord {
 	return {
 		id: payload.id,
+		folderId: payload.folderId,
 		title: payload.title,
 		updatedAt: payload.updatedAt,
 		createdAt: payload.createdAt ?? payload.updatedAt
