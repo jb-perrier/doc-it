@@ -193,7 +193,7 @@
 
     :global(.dropdown-badge[open] summary),
     :global(.dropdown-badge summary:hover),
-    :global(.menu-badge-button:hover) {
+    :global(.menu-badge-button:not(:disabled):hover) {
         background: var(--surface-overlay-medium);
         border-color: var(--surface-overlay-border);
     }
@@ -246,8 +246,18 @@
             color 120ms ease;
     }
 
-    :global(.dropdown-item:hover),
-    :global(.dropdown-item:focus-visible) {
+    :global(.dropdown-item:disabled) {
+        cursor: default;
+        opacity: 0.5;
+        color: var(--text-soft);
+    }
+
+    :global(.dropdown-item--danger:disabled) {
+        color: color-mix(in srgb, var(--danger) 70%, var(--text) 30%);
+    }
+
+    :global(.dropdown-item:not(:disabled):hover),
+    :global(.dropdown-item:not(:disabled):focus-visible) {
         background: var(--surface-overlay-medium);
         border-radius: 0;
     }

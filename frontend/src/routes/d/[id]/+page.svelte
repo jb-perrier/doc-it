@@ -5,7 +5,11 @@
 	import { ChevronDown, Search, Sun, Moon } from "lucide-svelte";
 	import * as Y from "yjs";
 
-	import { listDocuments, renameDocumentTitle } from "$lib/api/documents";
+	import {
+		createDocument,
+		listDocuments,
+		renameDocumentTitle,
+	} from "$lib/api/documents";
 	import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
 	import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
 	import PresenceBar from "$lib/components/PresenceBar.svelte";
@@ -52,10 +56,11 @@
 	let usernameDraft = $state("");
 	let usernameSaving = $state(false);
 	let usernameErrorMessage = $state("");
+	let creatingDocument = $state(false);
 
 	const documentMenu = {
 		label: "Document",
-		items: ["Rename", "Duplicate", "Export Markdown", "Delete"],
+		items: ["New", "Rename", "Duplicate", "Export Markdown", "Delete"],
 	} as const;
 
 	const shareMenu = {
@@ -277,6 +282,32 @@
 		}
 	}
 
+	function isCurrentDocumentMenuItem(item: (typeof documentMenu.items)[number]) {
+		return item !== "New";
+	}
+
+	async function handleCreateDocument() {
+		if (creatingDocument) {
+			return;
+		}
+
+		activeTopbarMenu = null;
+		errorMessage = "";
+		creatingDocument = true;
+
+		try {
+			const nextDocument = await createDocument("Untitled");
+			await goto(`/d/${nextDocument.id}`);
+		} catch (error) {
+			errorMessage =
+				error instanceof Error
+					? error.message
+					: "Failed to create document";
+		} finally {
+			creatingDocument = false;
+		}
+	}
+
 	async function handleUsernameSubmit() {
 		if (!session || usernameSaving) {
 			return;
@@ -482,9 +513,19 @@
 									type="button"
 									class:dropdown-item--danger={item ===
 										"Delete"}
+									class:dropdown-item--separated={item ===
+										"New"}
 									class="dropdown-item"
+									disabled={(item === "New" && creatingDocument) ||
+										(searchModeOpen &&
+											isCurrentDocumentMenuItem(item))}
+									onclick={item === "New"
+										? () => void handleCreateDocument()
+										: undefined}
 								>
-									{item}
+									{item === "New" && creatingDocument
+										? "Creating..."
+										: item}
 								</button>
 							{/each}
 						</div>
@@ -565,30 +606,41 @@
 			<PresenceBar {peers} />
 			<div class="side-rail__actions side-rail__actions--right">
 				{#if document}
-					<details
-						class="dropdown-badge dropdown-badge--right"
-						open={activeTopbarMenu === shareMenu.label}
-						ontoggle={(event) =>
-							handleTopbarMenuToggle(
-								shareMenu.label,
-								(event.currentTarget as HTMLDetailsElement)
-									.open,
-							)}
-					>
-						<summary>
-							<span>{shareMenu.label}</span>
-							<ChevronDown size={14} strokeWidth={2.2} />
-						</summary>
-						<div class="dropdown-panel">
-							<div class="dropdown-items">
-								{#each shareMenu.items as item (item)}
-									<button type="button" class="dropdown-item">
-										{item}
-									</button>
-								{/each}
-							</div>
-						</div>
-					</details>
+						{#if searchModeOpen}
+							<button
+								type="button"
+								class="menu-badge-button menu-badge-button--disabled"
+								disabled
+							>
+								<span>{shareMenu.label}</span>
+								<ChevronDown size={14} strokeWidth={2.2} />
+							</button>
+						{:else}
+							<details
+								class="dropdown-badge dropdown-badge--right"
+								open={activeTopbarMenu === shareMenu.label}
+								ontoggle={(event) =>
+									handleTopbarMenuToggle(
+										shareMenu.label,
+										(event.currentTarget as HTMLDetailsElement)
+											.open,
+									)}
+							>
+								<summary>
+									<span>{shareMenu.label}</span>
+									<ChevronDown size={14} strokeWidth={2.2} />
+								</summary>
+								<div class="dropdown-panel">
+									<div class="dropdown-items">
+										{#each shareMenu.items as item (item)}
+											<button type="button" class="dropdown-item">
+												{item}
+											</button>
+										{/each}
+									</div>
+								</div>
+							</details>
+						{/if}
 					<button
 						type="button"
 						class="menu-badge-button menu-badge-button--icon"
@@ -660,6 +712,11 @@
 
 	.error {
 		color: var(--accent-strong);
+	}
+
+	.dropdown-item--separated {
+		box-shadow: inset 0 -1px 0 var(--line);
+		border-radius: 0;
 	}
 
 	@media (max-width: 1320px) {
