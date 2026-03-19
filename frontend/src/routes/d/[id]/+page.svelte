@@ -282,7 +282,9 @@
 		}
 	}
 
-	function isCurrentDocumentMenuItem(item: (typeof documentMenu.items)[number]) {
+	function isCurrentDocumentMenuItem(
+		item: (typeof documentMenu.items)[number],
+	) {
 		return item !== "New";
 	}
 
@@ -516,7 +518,8 @@
 									class:dropdown-item--separated={item ===
 										"New"}
 									class="dropdown-item"
-									disabled={(item === "New" && creatingDocument) ||
+									disabled={(item === "New" &&
+										creatingDocument) ||
 										(searchModeOpen &&
 											isCurrentDocumentMenuItem(item))}
 									onclick={item === "New"
@@ -606,41 +609,44 @@
 			<PresenceBar {peers} />
 			<div class="side-rail__actions side-rail__actions--right">
 				{#if document}
-						{#if searchModeOpen}
-							<button
-								type="button"
-								class="menu-badge-button menu-badge-button--disabled"
-								disabled
-							>
+					{#if searchModeOpen}
+						<button
+							type="button"
+							class="menu-badge-button menu-badge-button--disabled"
+							disabled
+						>
+							<span>{shareMenu.label}</span>
+							<ChevronDown size={14} strokeWidth={2.2} />
+						</button>
+					{:else}
+						<details
+							class="dropdown-badge dropdown-badge--right"
+							open={activeTopbarMenu === shareMenu.label}
+							ontoggle={(event) =>
+								handleTopbarMenuToggle(
+									shareMenu.label,
+									(event.currentTarget as HTMLDetailsElement)
+										.open,
+								)}
+						>
+							<summary>
 								<span>{shareMenu.label}</span>
 								<ChevronDown size={14} strokeWidth={2.2} />
-							</button>
-						{:else}
-							<details
-								class="dropdown-badge dropdown-badge--right"
-								open={activeTopbarMenu === shareMenu.label}
-								ontoggle={(event) =>
-									handleTopbarMenuToggle(
-										shareMenu.label,
-										(event.currentTarget as HTMLDetailsElement)
-											.open,
-									)}
-							>
-								<summary>
-									<span>{shareMenu.label}</span>
-									<ChevronDown size={14} strokeWidth={2.2} />
-								</summary>
-								<div class="dropdown-panel">
-									<div class="dropdown-items">
-										{#each shareMenu.items as item (item)}
-											<button type="button" class="dropdown-item">
-												{item}
-											</button>
-										{/each}
-									</div>
+							</summary>
+							<div class="dropdown-panel">
+								<div class="dropdown-items">
+									{#each shareMenu.items as item (item)}
+										<button
+											type="button"
+											class="dropdown-item"
+										>
+											{item}
+										</button>
+									{/each}
 								</div>
-							</details>
-						{/if}
+							</div>
+						</details>
+					{/if}
 					<button
 						type="button"
 						class="menu-badge-button menu-badge-button--icon"
