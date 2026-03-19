@@ -1,9 +1,8 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { onMount, tick } from "svelte";
-	import { fade } from "svelte/transition";
 	import { browser } from "$app/environment";
-	import { ChevronDown, Search, Settings2, Sun, Moon } from "lucide-svelte";
+	import { ChevronDown, Search, Sun, Moon } from "lucide-svelte";
 	import * as Y from "yjs";
 
 	import { listDocuments, renameDocumentTitle } from "$lib/api/documents";
@@ -48,6 +47,8 @@
 	let searchDocuments = $state<DocumentSummary[] | null>(null);
 	let searchLoading = $state(false);
 	let searchErrorMessage = $state("");
+	let savedDocumentScrollY = 0;
+	let hasSavedDocumentScroll = false;
 	let usernameDraft = $state("");
 	let usernameSaving = $state(false);
 	let usernameErrorMessage = $state("");
@@ -181,7 +182,7 @@
 		titleDraft = "";
 		usernameErrorMessage = "";
 		activeTopbarMenu = null;
-		closeSearchMode();
+		closeSearchMode({ restoreScroll: false });
 	}
 
 	async function getSessionProfile() {
@@ -322,17 +323,43 @@
 
 	async function openSearchMode() {
 		activeTopbarMenu = null;
+
+		if (browser && !searchModeOpen) {
+			savedDocumentScrollY = window.scrollY;
+			hasSavedDocumentScroll = true;
+		}
+
 		searchModeOpen = true;
 		searchQuery = "";
 		searchResultsIndex = 0;
+
+		if (browser) {
+			await tick();
+			window.scrollTo({ top: 0, behavior: "auto" });
+		}
+
 		await ensureSearchDocumentsLoaded();
 	}
 
-	function closeSearchMode() {
+	function closeSearchMode(options: { restoreScroll?: boolean } = {}) {
+		const { restoreScroll = true } = options;
+		const scrollTarget =
+			browser && restoreScroll && hasSavedDocumentScroll
+				? savedDocumentScrollY
+				: null;
+
 		searchModeOpen = false;
 		searchQuery = "";
 		searchResultsIndex = 0;
 		searchErrorMessage = "";
+		hasSavedDocumentScroll = false;
+		savedDocumentScrollY = 0;
+
+		if (scrollTarget !== null) {
+			void tick().then(() => {
+				window.scrollTo({ top: scrollTarget, behavior: "auto" });
+			});
+		}
 	}
 
 	async function ensureSearchDocumentsLoaded() {
@@ -407,8 +434,7 @@
 			return;
 		}
 
-		closeSearchMode();
-		await tick();
+		closeSearchMode({ restoreScroll: false });
 
 		if (target.id === data.id) {
 			return;
@@ -478,7 +504,7 @@
 				<button
 					type="button"
 					class="menu-badge-button"
-					onclick={closeSearchMode}
+					onclick={() => closeSearchMode()}
 				>
 					<span>Back to document</span>
 				</button>
@@ -501,40 +527,34 @@
 				<Search size={18} strokeWidth={2.1} />
 			{/snippet}
 
-			<div
-				class:editor-stage--hidden={searchModeOpen}
-				class="editor-stage"
-				aria-hidden={searchModeOpen}
-			>
-				{#if !loading && errorMessage}
-					<p class="status-card error">{errorMessage}</p>
-				{:else if !loading && document}
-					{#key data.id}
-						<EditorShell
-							title={titleDraft}
-							doc={ydoc}
-							{peers}
-							onTitleChange={handleTitleChange}
-							onSelectionChange={handleSelectionChange}
-						/>
-					{/key}
-				{/if}
-			</div>
-
 			{#if searchModeOpen}
-				<div class="search-overlay" transition:fade={{ duration: 140 }}>
-					<DocumentSearchWorkspace
-						query={searchQuery}
-						results={getSearchResults()}
-						selectedIndex={searchResultsIndex}
-						loading={searchLoading}
-						errorMessage={searchErrorMessage}
-						inputLeading={searchInputLeading}
-						onQueryChange={handleSearchQueryChange}
-						onKeyDown={handleSearchInputKeyDown}
-						onOpenResult={(target) => void openSearchResult(target)}
-						onHoverResult={handleSearchResultHover}
-					/>
+				<DocumentSearchWorkspace
+					query={searchQuery}
+					results={getSearchResults()}
+					selectedIndex={searchResultsIndex}
+					loading={searchLoading}
+					errorMessage={searchErrorMessage}
+					inputLeading={searchInputLeading}
+					onQueryChange={handleSearchQueryChange}
+					onKeyDown={handleSearchInputKeyDown}
+					onOpenResult={(target) => void openSearchResult(target)}
+					onHoverResult={handleSearchResultHover}
+				/>
+			{:else}
+				<div class="editor-stage">
+					{#if !loading && errorMessage}
+						<p class="status-card error">{errorMessage}</p>
+					{:else if !loading && document}
+						{#key data.id}
+							<EditorShell
+								title={titleDraft}
+								doc={ydoc}
+								{peers}
+								onTitleChange={handleTitleChange}
+								onSelectionChange={handleSelectionChange}
+							/>
+						{/key}
+					{/if}
 				</div>
 			{/if}
 		</div>
@@ -627,24 +647,7 @@
 	}
 
 	.editor-stage {
-		transition:
-			opacity 160ms ease,
-			transform 160ms ease,
-			filter 160ms ease;
-	}
-
-	.editor-stage--hidden {
-		opacity: 0.28;
-		transform: scale(0.994);
-		filter: blur(14px);
-		pointer-events: none;
-		user-select: none;
-	}
-
-	.search-overlay {
-		position: absolute;
-		inset: 0;
-		z-index: 1;
+		min-height: 70vh;
 	}
 
 	.status-card {

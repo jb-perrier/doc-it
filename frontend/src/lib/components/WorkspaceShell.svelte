@@ -37,6 +37,7 @@
 <style>
     .workspace-page {
         padding: 0 0 28px;
+        min-height: 100dvh;
         --editor-column-width: 960px;
         --editor-column-min-width: 840px;
         --side-rail-min-width: 0px;
@@ -50,6 +51,11 @@
         --presence-chip-font-size: 0.84rem;
         --presence-chip-gap: 8px;
         --presence-swatch-size: 10px;
+        background-color: var(--page-bg-end);
+        background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 180 180'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.78' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23noise)' opacity='0.028'/%3E%3C/svg%3E");
+        background-size: 180px 180px;
+        background-repeat: repeat;
+        background-position: top left;
     }
 
     .workspace-layout {
@@ -60,7 +66,7 @@
             minmax(var(--side-rail-min-width), 1fr);
         gap: clamp(18px, 2.4vw, 36px);
         align-items: start;
-        min-height: 100vh;
+        min-height: 100%;
         padding: 0 clamp(16px, 2vw, 28px);
         box-sizing: border-box;
     }

@@ -567,11 +567,129 @@
 
 	:global(.doc-editor pre) {
 		padding: 1rem;
-		border-radius: 18px;
+		border-radius: var(--menu-badge-radius, 8px);
 		background: var(--code-bg);
 		border: 1px solid var(--code-border);
 		color: var(--code-text);
 		overflow-x: auto;
+	}
+
+	:global(.doc-editor .code-block-node) {
+		position: relative;
+		margin: 1.4rem 0;
+		--syntax-text: var(--code-text);
+		--syntax-comment: rgba(177, 182, 190, 0.72);
+		--syntax-keyword: #ff8f6b;
+		--syntax-string: #9ad17d;
+		--syntax-number: #f3c969;
+		--syntax-title: #73c4ff;
+		--syntax-meta: #c7a6ff;
+		--syntax-attr: #f7b267;
+		--syntax-variable: #ffd3a1;
+	}
+
+	:global(:root[data-theme="light"] .doc-editor .code-block-node) {
+		--syntax-comment: rgba(90, 86, 80, 0.72);
+		--syntax-keyword: #b14a21;
+		--syntax-string: #547a26;
+		--syntax-number: #9c6a07;
+		--syntax-title: #1767a6;
+		--syntax-meta: #7d4ab3;
+		--syntax-attr: #9f5b0c;
+		--syntax-variable: #7f3f1b;
+	}
+
+	:global(.doc-editor .code-block-node__toolbar) {
+		position: absolute;
+		top: 0.75rem;
+		left: 0.85rem;
+		z-index: 1;
+	}
+
+	:global(.doc-editor .code-block-node__language) {
+		appearance: none;
+		padding: 0.36rem 1.9rem 0.36rem 0.7rem;
+		border-radius: 999px;
+		border: none;
+		background: transparent;
+		color: var(--text-soft);
+		font: inherit;
+		font-size: 0.8rem;
+		font-weight: 600;
+		line-height: 1.1;
+		cursor: pointer;
+		box-shadow: none;
+	}
+
+	:global(.doc-editor .code-block-node__language:focus) {
+		outline: none;
+	}
+
+	:global(.doc-editor .code-block-node pre) {
+		margin: 0;
+		padding-top: 3rem;
+	}
+
+	:global(.doc-editor .code-block-node pre code) {
+		display: block;
+		background: transparent;
+		color: var(--syntax-text);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-comment),
+	:global(.doc-editor .code-block-node .hljs-quote) {
+		color: var(--syntax-comment);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-keyword),
+	:global(.doc-editor .code-block-node .hljs-selector-tag),
+	:global(.doc-editor .code-block-node .hljs-literal),
+	:global(.doc-editor .code-block-node .hljs-name),
+	:global(.doc-editor .code-block-node .hljs-section),
+	:global(.doc-editor .code-block-node .hljs-link) {
+		color: var(--syntax-keyword);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-string),
+	:global(.doc-editor .code-block-node .hljs-regexp),
+	:global(.doc-editor .code-block-node .hljs-addition),
+	:global(.doc-editor .code-block-node .hljs-attribute),
+	:global(.doc-editor .code-block-node .hljs-template-tag),
+	:global(.doc-editor .code-block-node .hljs-template-variable) {
+		color: var(--syntax-string);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-number),
+	:global(.doc-editor .code-block-node .hljs-symbol),
+	:global(.doc-editor .code-block-node .hljs-bullet),
+	:global(.doc-editor .code-block-node .hljs-built_in),
+	:global(.doc-editor .code-block-node .hljs-type) {
+		color: var(--syntax-number);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-title),
+	:global(.doc-editor .code-block-node .hljs-title.class_),
+	:global(.doc-editor .code-block-node .hljs-title.function_) {
+		color: var(--syntax-title);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-meta),
+	:global(.doc-editor .code-block-node .hljs-doctag) {
+		color: var(--syntax-meta);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-attr),
+	:global(.doc-editor .code-block-node .hljs-selector-class),
+	:global(.doc-editor .code-block-node .hljs-selector-id),
+	:global(.doc-editor .code-block-node .hljs-selector-attr) {
+		color: var(--syntax-attr);
+	}
+
+	:global(.doc-editor .code-block-node .hljs-variable),
+	:global(.doc-editor .code-block-node .hljs-property),
+	:global(.doc-editor .code-block-node .hljs-params),
+	:global(.doc-editor .code-block-node .hljs-deletion) {
+		color: var(--syntax-variable);
 	}
 
 	:global(.doc-editor p),
@@ -587,7 +705,7 @@
 		color: var(--accent-strong);
 	}
 
-	:global(.doc-editor code) {
+	:global(.doc-editor :not(pre) > code) {
 		font-family: "IBM Plex Mono", "Cascadia Code", monospace;
 		border-radius: 4px;
 		background: var(--surface-overlay-strong);
