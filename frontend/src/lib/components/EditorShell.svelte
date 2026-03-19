@@ -63,6 +63,7 @@
 			color: string;
 			left: number;
 			top: number;
+			height: number;
 		}>
 	>([]);
 	let formatting = $state<EditorFormattingState>(getEmptyFormattingState());
@@ -173,6 +174,7 @@
 					color: peer.color,
 					left: coords.left - rootBounds.left,
 					top: coords.top - rootBounds.top,
+					height: Math.max(coords.bottom - coords.top, 16),
 				};
 			});
 	}
@@ -408,7 +410,7 @@
 			{#each cursorOverlays as overlay (overlay.clientId)}
 				<div
 					class="remote-cursor"
-					style={`left:${overlay.left}px;top:${overlay.top}px;color:${overlay.color};`}
+					style={`left:${overlay.left}px;top:${overlay.top}px;height:${overlay.height}px;color:${overlay.color};`}
 				>
 					<span
 						class="remote-cursor__label"
@@ -807,7 +809,6 @@
 	.remote-cursor {
 		position: absolute;
 		width: 2px;
-		height: 1.5rem;
 		background: currentColor;
 		pointer-events: none;
 		z-index: 20;
