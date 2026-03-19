@@ -440,6 +440,10 @@
 			return;
 		}
 
+		loading = true;
+		errorMessage = "";
+		document = null;
+
 		await goto(`/d/${target.id}`);
 	}
 
@@ -542,9 +546,11 @@
 				/>
 			{:else}
 				<div class="editor-stage">
-					{#if !loading && errorMessage}
+					{#if loading}
+						<p class="status-card">Opening document…</p>
+					{:else if errorMessage}
 						<p class="status-card error">{errorMessage}</p>
-					{:else if !loading && document}
+					{:else if document}
 						{#key data.id}
 							<EditorShell
 								title={titleDraft}
