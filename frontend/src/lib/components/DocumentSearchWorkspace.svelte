@@ -5,9 +5,12 @@
         ChevronDown,
         ChevronLeft,
         ChevronRight,
+        FolderPlus,
         FolderOpen,
         FolderTree,
         List,
+        Pencil,
+        Trash2,
     } from "lucide-svelte";
 
     import FolderPathBadge from "$lib/components/FolderPathBadge.svelte";
@@ -17,7 +20,7 @@
         type FolderPathSegment,
     } from "$lib/folders/path";
     import type { DocumentSearchResult } from "$lib/search/documents";
-    import type { FolderSummary } from "$lib/types";
+    import type { DocumentSummary, FolderSummary } from "$lib/types";
 
     type SearchViewMode = "list" | "tree" | "explorer";
 
@@ -51,6 +54,7 @@
         defaultExpandedKeys: Set<string>;
     };
 
+    const ROOT_FOLDER_KEY = "workspace-root";
     let {
         query,
         results,
@@ -59,7 +63,7 @@
         loading,
         errorMessage,
         emptyMessage = "No documents match that search.",
-        placeholder = "Find another document",
+        placeholder = "Find document",
         autoFocus = true,
         inputLeading,
         getFolderPath,
@@ -68,6 +72,11 @@
         onOpenResult,
         onHoverResult,
         onMoveResultToFolder,
+        onCreateSubfolder,
+        onRenameFolder,
+        onDeleteFolder,
+        onRenameDocument,
+        onDeleteDocument,
     } = $props<{
         query: string;
         results: DocumentSearchResult[];
@@ -90,9 +99,21 @@
             document: DocumentSearchResult["document"],
             folderId: string,
         ) => Promise<void>;
+        onCreateSubfolder?: (parentFolderId: string) => Promise<FolderSummary>;
+        onRenameFolder?: (
+            folderId: string,
+            name: string,
+        ) => Promise<FolderSummary>;
+        onDeleteFolder?: (folderId: string) => Promise<void>;
+        onRenameDocument?: (
+            documentId: string,
+            title: string,
+        ) => Promise<DocumentSummary>;
+        onDeleteDocument?: (documentId: string) => Promise<void>;
     }>();
 
     let inputElement = $state<HTMLInputElement | null>(null);
+    let renameInputElement = $state<HTMLInputElement | null>(null);
     let viewMode = $state<SearchViewMode>("list");
     let expandedFolderKeys = $state<Set<string>>(new Set());
     let currentExplorerFolderKey = $state<string | null>(null);
@@ -100,6 +121,18 @@
     let pendingMoveDocumentId = $state<string | null>(null);
     let dragTargetFolderKey = $state<string | null>(null);
     let moveErrorMessage = $state("");
+    let hoveredFolderKey = $state<string | null>(null);
+    let hoveredDocumentId = $state<string | null>(null);
+    let editingFolderKey = $state<string | null>(null);
+    let editingDocumentId = $state<string | null>(null);
+    let editingValue = $state("");
+    let savingFolderKey = $state<string | null>(null);
+    let deletingFolderKey = $state<string | null>(null);
+    let creatingFolderParentKey = $state<string | null>(null);
+    let folderActionError = $state("");
+    let documentActionError = $state("");
+    let savingDocumentId = $state<string | null>(null);
+    let deletingDocumentId = $state<string | null>(null);
 
     const hasSearchQuery = $derived(query.trim().length > 0);
 
@@ -128,16 +161,32 @@
     );
 
     const resultsLabel = $derived(
-        query.trim()
-            ? "Matching documents"
-            : viewMode === "explorer"
-              ? "Browse workspace"
-              : "Workspace contents",
+                viewMode === "explorer"
+                        ? "Explorer"
+                        : viewMode === "tree"
+                            ? "Tree"
+                            : "List",
     );
 
     $effect(() => {
         searchTree;
         expandedFolderKeys = new Set(searchTree.defaultExpandedKeys);
+
+        if (editingFolderKey && !searchTree.folders.has(editingFolderKey)) {
+            editingFolderKey = null;
+            editingValue = "";
+        }
+
+        if (
+            editingDocumentId &&
+            !results.some(
+                (result: DocumentSearchResult) =>
+                    result.document.id === editingDocumentId,
+            )
+        ) {
+            editingDocumentId = null;
+            editingValue = "";
+        }
 
         if (
             currentExplorerFolderKey &&
@@ -145,6 +194,18 @@
         ) {
             currentExplorerFolderKey = null;
         }
+    });
+
+    $effect(() => {
+        editingFolderKey;
+        editingDocumentId;
+
+        void tick().then(() => {
+            if (editingFolderKey || editingDocumentId) {
+                renameInputElement?.focus();
+                renameInputElement?.select();
+            }
+        });
     });
 
     $effect(() => {
@@ -184,6 +245,332 @@
         }
 
         expandedFolderKeys = nextExpanded;
+    }
+
+    function handleTreeFolderRowClick(
+        event: MouseEvent,
+        folder: SearchTreeFolderNode,
+    ) {
+        if (
+            editingFolderKey ||
+            editingDocumentId ||
+            savingFolderKey ||
+            savingDocumentId ||
+            deletingFolderKey ||
+            deletingDocumentId ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId
+        ) {
+            return;
+        }
+
+        const target = event.target;
+        if (
+            target instanceof Element &&
+            target.closest(
+                'button, input, textarea, select, option, a, label, summary',
+            )
+        ) {
+            return;
+        }
+
+        if (
+            folder.childFolderKeys.length === 0 &&
+            folder.documentEntries.length === 0
+        ) {
+            return;
+        }
+
+        toggleFolderExpansion(folder.key);
+    }
+
+    function handleTreeFolderRowKeyDown(
+        event: KeyboardEvent,
+        folder: SearchTreeFolderNode,
+    ) {
+        if (event.key !== 'Enter' && event.key !== ' ') {
+            return;
+        }
+
+        event.preventDefault();
+        handleTreeFolderRowClick(event as unknown as MouseEvent, folder);
+    }
+
+    function canRenameFolder(folderKey: string) {
+        return Boolean(onRenameFolder) && folderKey !== ROOT_FOLDER_KEY;
+    }
+
+    function canRenameDocument(documentId: string) {
+        return Boolean(onRenameDocument);
+    }
+
+    function canCreateFolder(parentFolderKey: string) {
+        return Boolean(onCreateSubfolder);
+    }
+
+    function canDeleteFolder(folderKey: string) {
+        return Boolean(onDeleteFolder) && folderKey !== ROOT_FOLDER_KEY;
+    }
+
+    function canDeleteDocument(documentId: string) {
+        return Boolean(onDeleteDocument);
+    }
+
+    function showFolderActions(folderKey: string) {
+        return hoveredFolderKey === folderKey || editingFolderKey === folderKey;
+    }
+
+    function showDocumentActions(documentId: string) {
+        return (
+            hoveredDocumentId === documentId ||
+            editingDocumentId === documentId
+        );
+    }
+
+    function startFolderRename(folder: SearchTreeFolderNode) {
+        if (
+            !canRenameFolder(folder.key) ||
+            savingFolderKey ||
+            deletingFolderKey ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId ||
+            savingDocumentId ||
+            deletingDocumentId
+        ) {
+            return;
+        }
+
+        editingFolderKey = folder.key;
+        editingDocumentId = null;
+        editingValue = folder.name;
+        folderActionError = "";
+        documentActionError = "";
+    }
+
+    function cancelFolderRename() {
+        editingFolderKey = null;
+        editingValue = "";
+        folderActionError = "";
+    }
+
+    function startDocumentRename(document: DocumentSearchResult["document"]) {
+        if (
+            !canRenameDocument(document.id) ||
+            savingFolderKey ||
+            deletingFolderKey ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId ||
+            savingDocumentId ||
+            deletingDocumentId
+        ) {
+            return;
+        }
+
+        editingDocumentId = document.id;
+        editingFolderKey = null;
+        editingValue = document.title;
+        documentActionError = "";
+        folderActionError = "";
+    }
+
+    function cancelDocumentRename() {
+        editingDocumentId = null;
+        editingValue = "";
+        documentActionError = "";
+    }
+
+    async function submitFolderRename() {
+        if (!editingFolderKey || !onRenameFolder || savingFolderKey) {
+            return;
+        }
+
+        const nextName = editingValue.trim();
+        if (!nextName) {
+            folderActionError = "Folder name cannot be empty";
+            return;
+        }
+
+        const folderKey = editingFolderKey;
+        savingFolderKey = folderKey;
+        folderActionError = "";
+        documentActionError = "";
+
+        try {
+            await onRenameFolder(folderKey, nextName);
+            editingFolderKey = null;
+            editingValue = "";
+        } catch (error) {
+            folderActionError =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to rename folder";
+        } finally {
+            savingFolderKey = null;
+        }
+    }
+
+    async function submitDocumentRename() {
+        if (!editingDocumentId || !onRenameDocument || savingDocumentId) {
+            return;
+        }
+
+        const nextTitle = editingValue.trim();
+        if (!nextTitle) {
+            documentActionError = "Document title cannot be empty";
+            return;
+        }
+
+        const documentId = editingDocumentId;
+        savingDocumentId = documentId;
+        documentActionError = "";
+        folderActionError = "";
+
+        try {
+            await onRenameDocument(documentId, nextTitle);
+            editingDocumentId = null;
+            editingValue = "";
+        } catch (error) {
+            documentActionError =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to rename document";
+        } finally {
+            savingDocumentId = null;
+        }
+    }
+
+    async function handleDeleteFolder(folder: SearchTreeFolderNode) {
+        if (
+            !onDeleteFolder ||
+            !canDeleteFolder(folder.key) ||
+            savingFolderKey ||
+            deletingFolderKey ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId ||
+            savingDocumentId ||
+            deletingDocumentId
+        ) {
+            return;
+        }
+
+        if (
+            typeof window !== "undefined" &&
+            !window.confirm(
+                `Delete folder \"${folder.name}\"? Empty subfolders will be removed too.`,
+            )
+        ) {
+            return;
+        }
+
+        deletingFolderKey = folder.key;
+        folderActionError = "";
+
+        try {
+            await onDeleteFolder(folder.key);
+
+            if (editingFolderKey === folder.key) {
+                cancelFolderRename();
+            }
+
+            if (hoveredFolderKey === folder.key) {
+                hoveredFolderKey = null;
+            }
+        } catch (error) {
+            folderActionError =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to delete folder";
+        } finally {
+            deletingFolderKey = null;
+        }
+    }
+
+    async function handleDeleteDocumentRow(
+        document: DocumentSearchResult["document"],
+    ) {
+        if (
+            !onDeleteDocument ||
+            !canDeleteDocument(document.id) ||
+            savingFolderKey ||
+            deletingFolderKey ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId ||
+            savingDocumentId ||
+            deletingDocumentId
+        ) {
+            return;
+        }
+
+        if (
+            typeof window !== "undefined" &&
+            !window.confirm(
+                `Delete document \"${document.title || "Untitled"}\"? This action cannot be undone.`,
+            )
+        ) {
+            return;
+        }
+
+        deletingDocumentId = document.id;
+        documentActionError = "";
+        folderActionError = "";
+
+        try {
+            await onDeleteDocument(document.id);
+
+            if (editingDocumentId === document.id) {
+                cancelDocumentRename();
+            }
+
+            if (hoveredDocumentId === document.id) {
+                hoveredDocumentId = null;
+            }
+        } catch (error) {
+            documentActionError =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to delete document";
+        } finally {
+            deletingDocumentId = null;
+        }
+    }
+
+    async function handleCreateFolder(parentFolderKey: string) {
+        if (
+            !onCreateSubfolder ||
+            !canCreateFolder(parentFolderKey) ||
+            savingFolderKey ||
+            deletingFolderKey ||
+            creatingFolderParentKey ||
+            pendingMoveDocumentId ||
+            savingDocumentId ||
+            deletingDocumentId
+        ) {
+            return;
+        }
+
+        creatingFolderParentKey = parentFolderKey;
+        folderActionError = "";
+
+        try {
+            const created = await onCreateSubfolder(parentFolderKey);
+
+            if (parentFolderKey !== ROOT_FOLDER_KEY) {
+                const nextExpanded = new Set(expandedFolderKeys);
+                nextExpanded.add(parentFolderKey);
+                expandedFolderKeys = nextExpanded;
+            }
+
+            editingFolderKey = created.id;
+            editingValue = created.name;
+            hoveredFolderKey = created.id;
+        } catch (error) {
+            folderActionError =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to create folder";
+        } finally {
+            creatingFolderParentKey = null;
+        }
     }
 
     function buildSearchTree(
@@ -472,7 +859,7 @@
             searchTree.folders.get(currentExplorerFolderKey)?.parentKey ?? null;
     }
 
-    function getExplorerFolderMeta(folder: SearchTreeFolderNode) {
+    function getFolderMeta(folder: SearchTreeFolderNode) {
         const folderCount = folder.childFolderKeys.length;
         const documentCount = folder.documentEntries.length;
         const parts: string[] = [];
@@ -489,7 +876,17 @@
     }
 
     function handleDocumentDragStart(documentId: string) {
-        if (!onMoveResultToFolder || pendingMoveDocumentId) {
+        if (
+            !onMoveResultToFolder ||
+            pendingMoveDocumentId ||
+            editingFolderKey ||
+            editingDocumentId ||
+            savingFolderKey ||
+            savingDocumentId ||
+            creatingFolderParentKey ||
+            deletingFolderKey ||
+            deletingDocumentId
+        ) {
             return;
         }
 
@@ -508,6 +905,13 @@
         if (
             !draggedEntry ||
             pendingMoveDocumentId ||
+            editingFolderKey ||
+            editingDocumentId ||
+            savingFolderKey ||
+            savingDocumentId ||
+            creatingFolderParentKey ||
+            deletingFolderKey ||
+            deletingDocumentId ||
             draggedEntry.folderKey === folderKey
         ) {
             return;
@@ -531,6 +935,13 @@
             !onMoveResultToFolder ||
             !draggedEntry ||
             pendingMoveDocumentId ||
+            editingFolderKey ||
+            editingDocumentId ||
+            savingFolderKey ||
+            savingDocumentId ||
+            creatingFolderParentKey ||
+            deletingFolderKey ||
+            deletingDocumentId ||
             draggedEntry.folderKey === folderKey
         ) {
             dragTargetFolderKey = null;
@@ -586,6 +997,7 @@
         {:else if !loading}
             <div
                 class:search-workspace__results--compact={!query.trim()}
+                class:search-workspace__results--list={viewMode === "list"}
                 class:search-workspace__results--queried={query.trim()}
                 class="search-workspace__results"
             >
@@ -594,6 +1006,20 @@
                         class="search-workspace__state search-workspace__state--error"
                     >
                         {moveErrorMessage}
+                    </p>
+                {/if}
+                {#if folderActionError}
+                    <p
+                        class="search-workspace__state search-workspace__state--error"
+                    >
+                        {folderActionError}
+                    </p>
+                {/if}
+                {#if documentActionError}
+                    <p
+                        class="search-workspace__state search-workspace__state--error"
+                    >
+                        {documentActionError}
                     </p>
                 {/if}
                 <div class="search-workspace__results-header">
@@ -655,64 +1081,191 @@
                     {#each results as result, index (result.document.id)}
                         {@const folderPath =
                             getFolderPath?.(result.document) ?? []}
-                        <button
-                            type="button"
-                            class:selected={index === selectedIndex}
-                            class="search-result"
-                            onclick={() => onOpenResult(result.document)}
-                            onmousemove={() => onHoverResult?.(index)}
+                        <div
+                            class="search-result-row"
+                            role="presentation"
+                            onmouseenter={() => {
+                                hoveredDocumentId = result.document.id;
+                            }}
+                            onmouseleave={() => {
+                                if (hoveredDocumentId === result.document.id) {
+                                    hoveredDocumentId = null;
+                                }
+                            }}
                         >
-                            <span class="search-result__content">
-                                <span class="search-result__title"
-                                    >{result.document.title || "Untitled"}</span
+                            {#if editingDocumentId === result.document.id}
+                                <div
+                                    class:selected={index === selectedIndex}
+                                    class:search-result--hovered={hoveredDocumentId ===
+                                        result.document.id}
+                                    class="search-result search-result--editing"
                                 >
-                                <span class="search-result__meta">
-                                    Updated {formatUpdatedAt(
-                                        result.document.updatedAt,
-                                    )}
-                                </span>
-                            </span>
+                                    <span class="search-result__content">
+                                        <input
+                                            bind:this={renameInputElement}
+                                            class="search-folder-management__input search-folder-management__input--document"
+                                            type="text"
+                                            value={editingValue}
+                                            spellcheck="false"
+                                            maxlength="160"
+                                            oninput={(event) => {
+                                                editingValue = (
+                                                    event.currentTarget as HTMLInputElement
+                                                ).value;
+                                            }}
+                                            onkeydown={(event) => {
+                                                event.stopPropagation();
+                                                if (event.key === "Enter") {
+                                                    event.preventDefault();
+                                                    void submitDocumentRename();
+                                                }
 
-                            {#if folderPath.length > 0}
-                                <span class="search-result__folder-path">
-                                    <FolderPathBadge segments={folderPath} />
-                                </span>
+                                                if (event.key === "Escape") {
+                                                    event.preventDefault();
+                                                    cancelDocumentRename();
+                                                }
+                                            }}
+                                            onblur={() => {
+                                                void submitDocumentRename();
+                                            }}
+                                        />
+                                        <span class="search-result__meta">
+                                            Updated {formatUpdatedAt(
+                                                result.document.updatedAt,
+                                            )}
+                                        </span>
+                                    </span>
+
+                                    {#if folderPath.length > 0}
+                                        <span class="search-result__folder-path">
+                                            <FolderPathBadge segments={folderPath} />
+                                        </span>
+                                    {/if}
+                                </div>
+                            {:else}
+                                <button
+                                    type="button"
+                                    class:selected={index === selectedIndex}
+                                    class:search-result--hovered={hoveredDocumentId ===
+                                        result.document.id}
+                                    class="search-result"
+                                    onclick={() => onOpenResult(result.document)}
+                                    onmousemove={() => {
+                                        onHoverResult?.(index);
+                                    }}
+                                >
+                                    <span class="search-result__content">
+                                        <span class="search-result__title"
+                                            >{result.document.title || "Untitled"}</span
+                                        >
+                                        <span class="search-result__meta">
+                                            Updated {formatUpdatedAt(
+                                                result.document.updatedAt,
+                                            )}
+                                        </span>
+                                    </span>
+
+                                    {#if folderPath.length > 0}
+                                        <span class="search-result__folder-path">
+                                            <FolderPathBadge segments={folderPath} />
+                                        </span>
+                                    {/if}
+                                </button>
                             {/if}
-                        </button>
+
+                            {#if canRenameDocument(result.document.id) || canDeleteDocument(result.document.id)}
+                                <div
+                                    class:search-folder-management__actions--visible={showDocumentActions(
+                                        result.document.id,
+                                    )}
+                                    class="search-folder-management__actions"
+                                >
+                                    {#if canRenameDocument(result.document.id)}
+                                        <button
+                                            type="button"
+                                            class="search-folder-management__action"
+                                            aria-label={`Rename ${result.document.title || "Untitled"}`}
+                                            title="Rename document"
+                                            disabled={savingFolderKey !== null ||
+                                                deletingFolderKey !== null ||
+                                                savingDocumentId !== null ||
+                                                deletingDocumentId !== null}
+                                            onclick={() =>
+                                                startDocumentRename(
+                                                    result.document,
+                                                )}
+                                        >
+                                            <Pencil size={12} strokeWidth={2.1} />
+                                        </button>
+                                    {/if}
+                                    {#if canDeleteDocument(result.document.id)}
+                                        <button
+                                            type="button"
+                                            class="search-folder-management__action search-folder-management__action--danger"
+                                            aria-label={`Delete ${result.document.title || "Untitled"}`}
+                                            title="Delete document"
+                                            disabled={savingFolderKey !== null ||
+                                                deletingFolderKey !== null ||
+                                                savingDocumentId !== null ||
+                                                deletingDocumentId !== null}
+                                            onclick={() =>
+                                                void handleDeleteDocumentRow(
+                                                    result.document,
+                                                )}
+                                        >
+                                            <Trash2 size={12} strokeWidth={2.1} />
+                                        </button>
+                                    {/if}
+                                </div>
+                            {/if}
+                        </div>
                     {/each}
                 {:else if viewMode === "explorer"}
                     <div class="search-explorer" aria-label="Browse folders">
                         <div class="search-explorer__toolbar">
-                            <button
-                                type="button"
-                                class="search-explorer__up-button"
-                                disabled={!currentExplorerFolderKey}
-                                onclick={navigateExplorerUp}
-                            >
-                                <ChevronLeft size={14} strokeWidth={2.2} />
-                                <span>Up</span>
-                            </button>
+                            <div class="search-explorer__toolbar-start">
+                                <button
+                                    type="button"
+                                    class="search-workspace__toolbar-action search-workspace__toolbar-action--icon"
+                                    disabled={!currentExplorerFolderKey}
+                                    aria-label="Up"
+                                    title="Up"
+                                    onclick={navigateExplorerUp}
+                                >
+                                    <ChevronLeft size={14} strokeWidth={2.2} />
+                                </button>
+
+                                {#if canCreateFolder(currentExplorerFolderKey ?? ROOT_FOLDER_KEY)}
+                                    <button
+                                        type="button"
+                                        class="search-workspace__toolbar-action search-workspace__toolbar-action--subtle search-workspace__toolbar-action--icon"
+                                        disabled={savingFolderKey !== null ||
+                                            deletingFolderKey !== null ||
+                                            creatingFolderParentKey !== null}
+                                        aria-label="Create folder in current location"
+                                        title="New folder"
+                                        onclick={() =>
+                                            void handleCreateFolder(
+                                                currentExplorerFolderKey ??
+                                                    ROOT_FOLDER_KEY,
+                                            )}
+                                    >
+                                        <FolderPlus size={14} strokeWidth={2.1} />
+                                    </button>
+                                {/if}
+                            </div>
 
                             <div
                                 class="search-explorer__breadcrumbs"
                                 aria-label="Current folder"
                             >
-                                <button
-                                    type="button"
-                                    class:search-explorer__crumb--active={!currentExplorerFolderKey}
-                                    class="search-explorer__crumb"
-                                    onclick={() => {
-                                        currentExplorerFolderKey = null;
-                                    }}
-                                >
-                                    Workspace
-                                </button>
-
                                 {#each explorerPath as folder (folder.key)}
-                                    <span
-                                        class="search-explorer__crumb-separator"
-                                        aria-hidden="true">/</span
-                                    >
+                                    {#if folder.key !== explorerPath[0]?.key}
+                                        <span
+                                            class="search-explorer__crumb-separator"
+                                            aria-hidden="true">/</span
+                                        >
+                                    {/if}
                                     <button
                                         type="button"
                                         class:search-explorer__crumb--active={folder.key ===
@@ -737,14 +1290,19 @@
                             <div class="search-explorer__list">
                                 {#each explorerItems as item (item.kind === "folder" ? `folder:${item.key}` : `document:${item.key}`)}
                                     {#if item.kind === "folder"}
-                                        <button
-                                            type="button"
-                                            class:search-explorer__item--drop-target={dragTargetFolderKey ===
+                                        <div
+                                            class:search-explorer__entry--drop-target={dragTargetFolderKey ===
                                                 item.key}
-                                            class="search-explorer__item search-explorer__item--folder"
-                                            aria-label={`Open folder ${item.name}`}
-                                            onclick={() =>
-                                                openExplorerFolder(item.key)}
+                                            class="search-explorer__entry"
+                                            role="presentation"
+                                            onmouseenter={() => {
+                                                hoveredFolderKey = item.key;
+                                            }}
+                                            onmouseleave={() => {
+                                                if (hoveredFolderKey === item.key) {
+                                                    hoveredFolderKey = null;
+                                                }
+                                            }}
                                             ondragover={(event) =>
                                                 handleFolderDragOver(
                                                     event,
@@ -758,77 +1316,300 @@
                                                     item.key,
                                                 )}
                                         >
-                                            <span
-                                                class="search-explorer__item-content"
-                                            >
-                                                <span
-                                                    class="search-explorer__item-title search-explorer__item-title--folder"
+                                            {#if editingFolderKey === item.key}
+                                                <div
+                                                    class="search-explorer__item search-explorer__item--folder search-explorer__item--editing"
                                                 >
-                                                    {item.name}
-                                                </span>
-                                                <span
-                                                    class="search-explorer__item-meta"
+                                                    <span
+                                                        class="search-explorer__item-content"
+                                                    >
+                                                        <input
+                                                            bind:this={renameInputElement}
+                                                            class="search-folder-management__input"
+                                                            type="text"
+                                                            value={editingValue}
+                                                            spellcheck="false"
+                                                            maxlength="80"
+                                                            oninput={(event) => {
+                                                                editingValue = (
+                                                                    event.currentTarget as HTMLInputElement
+                                                                ).value;
+                                                            }}
+                                                            onkeydown={(event) => {
+                                                                event.stopPropagation();
+                                                                if (event.key === "Enter") {
+                                                                    event.preventDefault();
+                                                                    void submitFolderRename();
+                                                                }
+
+                                                                if (event.key === "Escape") {
+                                                                    event.preventDefault();
+                                                                    cancelFolderRename();
+                                                                }
+                                                            }}
+                                                            onblur={() => {
+                                                                void submitFolderRename();
+                                                            }}
+                                                        />
+                                                        <span
+                                                            class="search-explorer__item-meta"
+                                                        >
+                                                            {getFolderMeta(item)}
+                                                        </span>
+                                                    </span>
+                                                </div>
+                                            {:else}
+                                                <button
+                                                    type="button"
+                                                    class="search-explorer__item search-explorer__item--folder"
+                                                    aria-label={`Open folder ${item.name}`}
+                                                    disabled={Boolean(editingFolderKey) ||
+                                                        savingFolderKey !== null ||
+                                                        deletingFolderKey !== null}
+                                                    onclick={() =>
+                                                        openExplorerFolder(item.key)}
                                                 >
-                                                    {getExplorerFolderMeta(
-                                                        item,
+                                                    <span
+                                                        class="search-explorer__item-content"
+                                                    >
+                                                        <span
+                                                            class="search-explorer__item-title search-explorer__item-title--folder"
+                                                        >
+                                                            {item.name}
+                                                        </span>
+                                                        <span
+                                                            class="search-explorer__item-meta"
+                                                        >
+                                                            {getFolderMeta(item)}
+                                                        </span>
+                                                    </span>
+                                                    <span
+                                                        class="search-explorer__item-accessory"
+                                                    >
+                                                        <ChevronRight
+                                                            size={14}
+                                                            strokeWidth={2.2}
+                                                        />
+                                                    </span>
+                                                </button>
+                                            {/if}
+
+                                            {#if canCreateFolder(item.key) || canRenameFolder(item.key) || canDeleteFolder(item.key)}
+                                                <div
+                                                    class:search-folder-management__actions--visible={showFolderActions(
+                                                        item.key,
                                                     )}
-                                                </span>
-                                            </span>
-                                            <span
-                                                class="search-explorer__item-accessory"
-                                            >
-                                                <ChevronRight
-                                                    size={14}
-                                                    strokeWidth={2.2}
-                                                />
-                                            </span>
-                                        </button>
-                                    {:else}
-                                        <button
-                                            type="button"
-                                            draggable={onMoveResultToFolder &&
-                                                pendingMoveDocumentId === null}
-                                            class:selected={item.result.document
-                                                .id === selectedDocumentId}
-                                            class:search-tree__document--dragging={item
-                                                .result.document.id ===
-                                                draggingDocumentId}
-                                            class="search-explorer__item search-explorer__item--document"
-                                            onclick={() =>
-                                                onOpenResult(
-                                                    item.result.document,
-                                                )}
-                                            onmousemove={() =>
-                                                onHoverResult?.(item.index)}
-                                            ondragstart={() =>
-                                                handleDocumentDragStart(
-                                                    item.result.document.id,
-                                                )}
-                                            ondragend={handleDocumentDragEnd}
-                                        >
-                                            <span
-                                                class="search-explorer__item-content"
-                                            >
-                                                <span
-                                                    class="search-explorer__item-title"
+                                                    class="search-folder-management__actions"
                                                 >
-                                                    {item.result.document
-                                                        .title || "Untitled"}
-                                                </span>
-                                                <span
-                                                    class="search-explorer__item-meta"
-                                                >
-                                                    {#if pendingMoveDocumentId === item.result.document.id}
-                                                        Moving...
-                                                    {:else}
-                                                        Updated {formatUpdatedAt(
-                                                            item.result.document
-                                                                .updatedAt,
-                                                        )}
+                                                    {#if canCreateFolder(item.key)}
+                                                        <button
+                                                            type="button"
+                                                            class="search-folder-management__action"
+                                                            aria-label={`Create subfolder in ${item.name}`}
+                                                            title="Create subfolder"
+                                                            disabled={savingFolderKey !== null ||
+                                                                deletingFolderKey !== null ||
+                                                                creatingFolderParentKey !== null}
+                                                            onclick={() =>
+                                                                void handleCreateFolder(item.key)}
+                                                        >
+                                                            <FolderPlus size={12} strokeWidth={2.1} />
+                                                        </button>
                                                     {/if}
-                                                </span>
-                                            </span>
-                                        </button>
+                                                    {#if canRenameFolder(item.key)}
+                                                        <button
+                                                            type="button"
+                                                            class="search-folder-management__action"
+                                                            aria-label={`Rename ${item.name}`}
+                                                            title="Rename folder"
+                                                            disabled={savingFolderKey !== null ||
+                                                                deletingFolderKey !== null}
+                                                            onclick={() =>
+                                                                startFolderRename(item)}
+                                                        >
+                                                            <Pencil size={12} strokeWidth={2.1} />
+                                                        </button>
+                                                    {/if}
+                                                    {#if canDeleteFolder(item.key)}
+                                                        <button
+                                                            type="button"
+                                                            class="search-folder-management__action search-folder-management__action--danger"
+                                                            aria-label={`Delete ${item.name}`}
+                                                            title="Delete folder"
+                                                            disabled={savingFolderKey !== null ||
+                                                                deletingFolderKey !== null}
+                                                            onclick={() =>
+                                                                void handleDeleteFolder(item)}
+                                                        >
+                                                            <Trash2 size={12} strokeWidth={2.1} />
+                                                        </button>
+                                                    {/if}
+                                                </div>
+                                            {/if}
+                                        </div>
+                                    {:else}
+                                        <div
+                                            class="search-explorer__entry"
+                                            role="presentation"
+                                            onmouseenter={() => {
+                                                hoveredDocumentId = item.result.document.id;
+                                            }}
+                                            onmouseleave={() => {
+                                                if (hoveredDocumentId === item.result.document.id) {
+                                                    hoveredDocumentId = null;
+                                                }
+                                            }}
+                                        >
+                                            {#if editingDocumentId === item.result.document.id}
+                                                <div
+                                                    class:selected={item.result.document
+                                                        .id === selectedDocumentId}
+                                                    class:search-explorer__item--hovered={hoveredDocumentId ===
+                                                        item.result.document.id}
+                                                    class="search-explorer__item search-explorer__item--document search-explorer__item--editing"
+                                                >
+                                                    <span
+                                                        class="search-explorer__item-content"
+                                                    >
+                                                        <input
+                                                            bind:this={renameInputElement}
+                                                            class="search-folder-management__input search-folder-management__input--document"
+                                                            type="text"
+                                                            value={editingValue}
+                                                            spellcheck="false"
+                                                            maxlength="160"
+                                                            oninput={(event) => {
+                                                                editingValue = (
+                                                                    event.currentTarget as HTMLInputElement
+                                                                ).value;
+                                                            }}
+                                                            onkeydown={(event) => {
+                                                                event.stopPropagation();
+                                                                if (event.key === "Enter") {
+                                                                    event.preventDefault();
+                                                                    void submitDocumentRename();
+                                                                }
+
+                                                                if (event.key === "Escape") {
+                                                                    event.preventDefault();
+                                                                    cancelDocumentRename();
+                                                                }
+                                                            }}
+                                                            onblur={() => {
+                                                                void submitDocumentRename();
+                                                            }}
+                                                        />
+                                                        <span
+                                                            class="search-explorer__item-meta"
+                                                        >
+                                                            {#if pendingMoveDocumentId === item.result.document.id}
+                                                                Moving...
+                                                            {:else}
+                                                                Updated {formatUpdatedAt(
+                                                                    item.result.document
+                                                                        .updatedAt,
+                                                                )}
+                                                            {/if}
+                                                        </span>
+                                                    </span>
+                                                </div>
+                                            {:else}
+                                                <button
+                                                    type="button"
+                                                    draggable={onMoveResultToFolder &&
+                                                        pendingMoveDocumentId === null}
+                                                    class:selected={item.result.document
+                                                        .id === selectedDocumentId}
+                                                    class:search-explorer__item--hovered={hoveredDocumentId ===
+                                                        item.result.document.id}
+                                                    class:search-tree__document--dragging={item
+                                                        .result.document.id ===
+                                                        draggingDocumentId}
+                                                    class="search-explorer__item search-explorer__item--document"
+                                                    onclick={() =>
+                                                        onOpenResult(
+                                                            item.result.document,
+                                                        )}
+                                                    onmousemove={() => {
+                                                        onHoverResult?.(item.index);
+                                                    }}
+                                                    ondragstart={() =>
+                                                        handleDocumentDragStart(
+                                                            item.result.document.id,
+                                                        )}
+                                                    ondragend={handleDocumentDragEnd}
+                                                >
+                                                    <span
+                                                        class="search-explorer__item-content"
+                                                    >
+                                                        <span
+                                                            class="search-explorer__item-title"
+                                                        >
+                                                            {item.result.document
+                                                                .title || "Untitled"}
+                                                        </span>
+                                                        <span
+                                                            class="search-explorer__item-meta"
+                                                        >
+                                                            {#if pendingMoveDocumentId === item.result.document.id}
+                                                                Moving...
+                                                            {:else}
+                                                                Updated {formatUpdatedAt(
+                                                                    item.result.document
+                                                                        .updatedAt,
+                                                                )}
+                                                            {/if}
+                                                        </span>
+                                                    </span>
+                                                </button>
+                                            {/if}
+
+                                            {#if canRenameDocument(item.result.document.id) || canDeleteDocument(item.result.document.id)}
+                                                <div
+                                                    class:search-folder-management__actions--visible={showDocumentActions(
+                                                        item.result.document.id,
+                                                    )}
+                                                    class="search-folder-management__actions"
+                                                >
+                                                    {#if canRenameDocument(item.result.document.id)}
+                                                        <button
+                                                            type="button"
+                                                            class="search-folder-management__action"
+                                                            aria-label={`Rename ${item.result.document.title || "Untitled"}`}
+                                                            title="Rename document"
+                                                            disabled={savingFolderKey !== null ||
+                                                                deletingFolderKey !== null ||
+                                                                savingDocumentId !== null ||
+                                                                deletingDocumentId !== null}
+                                                            onclick={() =>
+                                                                startDocumentRename(
+                                                                    item.result.document,
+                                                                )}
+                                                        >
+                                                            <Pencil size={12} strokeWidth={2.1} />
+                                                        </button>
+                                                    {/if}
+                                                    {#if canDeleteDocument(item.result.document.id)}
+                                                        <button
+                                                            type="button"
+                                                            class="search-folder-management__action search-folder-management__action--danger"
+                                                            aria-label={`Delete ${item.result.document.title || "Untitled"}`}
+                                                            title="Delete document"
+                                                            disabled={savingFolderKey !== null ||
+                                                                deletingFolderKey !== null ||
+                                                                savingDocumentId !== null ||
+                                                                deletingDocumentId !== null}
+                                                            onclick={() =>
+                                                                void handleDeleteDocumentRow(
+                                                                    item.result.document,
+                                                                )}
+                                                        >
+                                                            <Trash2 size={12} strokeWidth={2.1} />
+                                                        </button>
+                                                    {/if}
+                                                </div>
+                                            {/if}
+                                        </div>
                                     {/if}
                                 {/each}
                             </div>
@@ -864,13 +1645,13 @@
                                         >
                                             {#if expandedFolderKeys.has(row.key)}
                                                 <ChevronDown
-                                                    size={12}
-                                                    strokeWidth={2.2}
+                                                    size={16}
+                                                    strokeWidth={2.5}
                                                 />
                                             {:else}
                                                 <ChevronRight
-                                                    size={12}
-                                                    strokeWidth={2.2}
+                                                    size={16}
+                                                    strokeWidth={2.5}
                                                 />
                                             {/if}
                                         </button>
@@ -882,34 +1663,150 @@
                                     {/if}
 
                                     <div
-                                        class:search-tree__folder--drop-target={dragTargetFolderKey ===
-                                            row.key}
-                                        class="search-tree__folder"
-                                        role="treeitem"
-                                        tabindex="-1"
-                                        aria-selected="false"
-                                        aria-label={`Folder ${row.name}`}
-                                        ondragover={(event) =>
-                                            handleFolderDragOver(
-                                                event,
-                                                row.key,
-                                            )}
-                                        ondragleave={() =>
-                                            handleFolderDragLeave(row.key)}
-                                        ondrop={(event) =>
-                                            void handleFolderDrop(
-                                                event,
-                                                row.key,
-                                            )}
+                                        class="search-tree__folder-row"
+                                        role="presentation"
+                                        onmouseenter={() => {
+                                            hoveredFolderKey = row.key;
+                                        }}
+                                        onmouseleave={() => {
+                                            if (hoveredFolderKey === row.key) {
+                                                hoveredFolderKey = null;
+                                            }
+                                        }}
                                     >
-                                        <span class="search-tree__folder-name"
-                                            >{row.name}</span
+                                        <div
+                                            class:search-tree__folder--drop-target={dragTargetFolderKey ===
+                                                row.key}
+                                            class:search-tree__folder--editing={editingFolderKey ===
+                                                row.key}
+                                            class="search-tree__folder"
+                                            role="treeitem"
+                                            tabindex="-1"
+                                            aria-selected="false"
+                                            aria-label={`Folder ${row.name}`}
+                                            onclick={(event) =>
+                                                handleTreeFolderRowClick(
+                                                    event,
+                                                    row,
+                                                )}
+                                            onkeydown={(event) =>
+                                                handleTreeFolderRowKeyDown(
+                                                    event,
+                                                    row,
+                                                )}
+                                            ondragover={(event) =>
+                                                handleFolderDragOver(
+                                                    event,
+                                                    row.key,
+                                                )}
+                                            ondragleave={() =>
+                                                handleFolderDragLeave(row.key)}
+                                            ondrop={(event) =>
+                                                void handleFolderDrop(
+                                                    event,
+                                                    row.key,
+                                                )}
                                         >
-                                        <span class="search-tree__folder-meta">
-                                            {row.documentEntries.length > 0
-                                                ? `${row.documentEntries.length} doc${row.documentEntries.length === 1 ? "" : "s"}`
-                                                : "Folder"}
-                                        </span>
+                                            {#if editingFolderKey === row.key}
+                                                <span class="search-tree__folder-content">
+                                                    <input
+                                                        bind:this={renameInputElement}
+                                                        class="search-folder-management__input search-folder-management__input--tree"
+                                                        type="text"
+                                                        value={editingValue}
+                                                        spellcheck="false"
+                                                        maxlength="80"
+                                                        oninput={(event) => {
+                                                            editingValue = (
+                                                                event.currentTarget as HTMLInputElement
+                                                            ).value;
+                                                        }}
+                                                        onkeydown={(event) => {
+                                                            event.stopPropagation();
+                                                            if (event.key === "Enter") {
+                                                                event.preventDefault();
+                                                                void submitFolderRename();
+                                                            }
+
+                                                            if (event.key === "Escape") {
+                                                                event.preventDefault();
+                                                                cancelFolderRename();
+                                                            }
+                                                        }}
+                                                        onblur={() => {
+                                                            void submitFolderRename();
+                                                        }}
+                                                    />
+
+                                                    <span class="search-tree__folder-meta">
+                                                        {getFolderMeta(row)}
+                                                    </span>
+                                                </span>
+                                            {:else}
+                                                <span class="search-tree__folder-content">
+                                                    <span class="search-tree__folder-name"
+                                                        >{row.name}</span
+                                                    >
+
+                                                    <span class="search-tree__folder-meta">
+                                                        {getFolderMeta(row)}
+                                                    </span>
+                                                </span>
+                                            {/if}
+                                        </div>
+
+                                        {#if canCreateFolder(row.key) || canRenameFolder(row.key) || canDeleteFolder(row.key)}
+                                            <div
+                                                class:search-folder-management__actions--visible={showFolderActions(
+                                                    row.key,
+                                                )}
+                                                class="search-folder-management__actions search-folder-management__actions--tree"
+                                            >
+                                                {#if canCreateFolder(row.key)}
+                                                    <button
+                                                        type="button"
+                                                        class="search-folder-management__action"
+                                                        aria-label={`Create subfolder in ${row.name}`}
+                                                        title="Create subfolder"
+                                                        disabled={savingFolderKey !== null ||
+                                                            deletingFolderKey !== null ||
+                                                            creatingFolderParentKey !== null}
+                                                        onclick={() =>
+                                                            void handleCreateFolder(row.key)}
+                                                    >
+                                                        <FolderPlus size={12} strokeWidth={2.1} />
+                                                    </button>
+                                                {/if}
+                                                {#if canRenameFolder(row.key)}
+                                                    <button
+                                                        type="button"
+                                                        class="search-folder-management__action"
+                                                        aria-label={`Rename ${row.name}`}
+                                                        title="Rename folder"
+                                                        disabled={savingFolderKey !== null ||
+                                                            deletingFolderKey !== null}
+                                                        onclick={() =>
+                                                            startFolderRename(row)}
+                                                    >
+                                                        <Pencil size={12} strokeWidth={2.1} />
+                                                    </button>
+                                                {/if}
+                                                {#if canDeleteFolder(row.key)}
+                                                    <button
+                                                        type="button"
+                                                        class="search-folder-management__action search-folder-management__action--danger"
+                                                        aria-label={`Delete ${row.name}`}
+                                                        title="Delete folder"
+                                                        disabled={savingFolderKey !== null ||
+                                                            deletingFolderKey !== null}
+                                                        onclick={() =>
+                                                            void handleDeleteFolder(row)}
+                                                    >
+                                                        <Trash2 size={12} strokeWidth={2.1} />
+                                                    </button>
+                                                {/if}
+                                            </div>
+                                        {/if}
                                     </div>
                                 </div>
                             {:else}
@@ -922,52 +1819,173 @@
                                         class="search-tree__toggle-spacer"
                                         aria-hidden="true"
                                     ></span>
-                                    <button
-                                        type="button"
-                                        role="treeitem"
-                                        draggable={onMoveResultToFolder &&
-                                            pendingMoveDocumentId === null}
-                                        aria-selected={row.result.document
-                                            .id === selectedDocumentId}
-                                        class:selected={row.result.document
-                                            .id === selectedDocumentId}
-                                        class:search-tree__document--dragging={row
-                                            .result.document.id ===
-                                            draggingDocumentId}
-                                        class="search-tree__document"
-                                        onclick={() =>
-                                            onOpenResult(row.result.document)}
-                                        onmousemove={() =>
-                                            onHoverResult?.(row.index)}
-                                        ondragstart={() =>
-                                            handleDocumentDragStart(
-                                                row.result.document.id,
-                                            )}
-                                        ondragend={handleDocumentDragEnd}
+                                    <div
+                                        class="search-tree__document-row"
+                                        role="presentation"
+                                        onmouseenter={() => {
+                                            hoveredDocumentId = row.result.document.id;
+                                        }}
+                                        onmouseleave={() => {
+                                            if (hoveredDocumentId === row.result.document.id) {
+                                                hoveredDocumentId = null;
+                                            }
+                                        }}
                                     >
-                                        <span
-                                            class="search-tree__document-content"
-                                        >
-                                            <span
-                                                class="search-tree__document-title"
+                                        {#if editingDocumentId === row.result.document.id}
+                                            <div
+                                                aria-selected={row.result.document
+                                                    .id === selectedDocumentId}
+                                                class:selected={row.result.document
+                                                    .id === selectedDocumentId}
+                                                class:search-tree__document--hovered={hoveredDocumentId ===
+                                                    row.result.document.id}
+                                                class="search-tree__document search-tree__document--editing"
                                             >
-                                                {row.result.document.title ||
-                                                    "Untitled"}
-                                            </span>
-                                            <span
-                                                class="search-tree__document-meta"
-                                            >
-                                                {#if pendingMoveDocumentId === row.result.document.id}
-                                                    Moving...
-                                                {:else}
-                                                    Updated {formatUpdatedAt(
-                                                        row.result.document
-                                                            .updatedAt,
+                                                <span
+                                                    class="search-tree__document-content"
+                                                >
+                                                    <input
+                                                        bind:this={renameInputElement}
+                                                        class="search-folder-management__input search-folder-management__input--document"
+                                                        type="text"
+                                                        value={editingValue}
+                                                        spellcheck="false"
+                                                        maxlength="160"
+                                                        oninput={(event) => {
+                                                            editingValue = (
+                                                                event.currentTarget as HTMLInputElement
+                                                            ).value;
+                                                        }}
+                                                        onkeydown={(event) => {
+                                                            event.stopPropagation();
+                                                            if (event.key === "Enter") {
+                                                                event.preventDefault();
+                                                                void submitDocumentRename();
+                                                            }
+
+                                                            if (event.key === "Escape") {
+                                                                event.preventDefault();
+                                                                cancelDocumentRename();
+                                                            }
+                                                        }}
+                                                        onblur={() => {
+                                                            void submitDocumentRename();
+                                                        }}
+                                                    />
+                                                    <span
+                                                        class="search-tree__document-meta"
+                                                    >
+                                                        {#if pendingMoveDocumentId === row.result.document.id}
+                                                            Moving...
+                                                        {:else}
+                                                            Updated {formatUpdatedAt(
+                                                                row.result.document
+                                                                    .updatedAt,
+                                                            )}
+                                                        {/if}
+                                                    </span>
+                                                </span>
+                                            </div>
+                                        {:else}
+                                            <button
+                                                type="button"
+                                                role="treeitem"
+                                                draggable={onMoveResultToFolder &&
+                                                    pendingMoveDocumentId === null}
+                                                aria-selected={row.result.document
+                                                    .id === selectedDocumentId}
+                                                class:selected={row.result.document
+                                                    .id === selectedDocumentId}
+                                                class:search-tree__document--hovered={hoveredDocumentId ===
+                                                    row.result.document.id}
+                                                class:search-tree__document--dragging={row
+                                                    .result.document.id ===
+                                                    draggingDocumentId}
+                                                class="search-tree__document"
+                                                onclick={() =>
+                                                    onOpenResult(
+                                                        row.result.document,
                                                     )}
+                                                onmousemove={() => {
+                                                    onHoverResult?.(row.index);
+                                                }}
+                                                ondragstart={() =>
+                                                    handleDocumentDragStart(
+                                                        row.result.document.id,
+                                                    )}
+                                                ondragend={handleDocumentDragEnd}
+                                            >
+                                                <span
+                                                    class="search-tree__document-content"
+                                                >
+                                                    <span
+                                                        class="search-tree__document-title"
+                                                    >
+                                                        {row.result.document.title ||
+                                                            "Untitled"}
+                                                    </span>
+                                                    <span
+                                                        class="search-tree__document-meta"
+                                                    >
+                                                        {#if pendingMoveDocumentId === row.result.document.id}
+                                                            Moving...
+                                                        {:else}
+                                                            Updated {formatUpdatedAt(
+                                                                row.result.document
+                                                                    .updatedAt,
+                                                            )}
+                                                        {/if}
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        {/if}
+
+                                        {#if canRenameDocument(row.result.document.id) || canDeleteDocument(row.result.document.id)}
+                                            <div
+                                                class:search-folder-management__actions--visible={showDocumentActions(
+                                                    row.result.document.id,
+                                                )}
+                                                class="search-folder-management__actions search-folder-management__actions--tree"
+                                            >
+                                                {#if canRenameDocument(row.result.document.id)}
+                                                    <button
+                                                        type="button"
+                                                        class="search-folder-management__action"
+                                                        aria-label={`Rename ${row.result.document.title || "Untitled"}`}
+                                                        title="Rename document"
+                                                        disabled={savingFolderKey !== null ||
+                                                            deletingFolderKey !== null ||
+                                                            savingDocumentId !== null ||
+                                                            deletingDocumentId !== null}
+                                                        onclick={() =>
+                                                            startDocumentRename(
+                                                                row.result.document,
+                                                            )}
+                                                    >
+                                                        <Pencil size={12} strokeWidth={2.1} />
+                                                    </button>
                                                 {/if}
-                                            </span>
-                                        </span>
-                                    </button>
+                                                {#if canDeleteDocument(row.result.document.id)}
+                                                    <button
+                                                        type="button"
+                                                        class="search-folder-management__action search-folder-management__action--danger"
+                                                        aria-label={`Delete ${row.result.document.title || "Untitled"}`}
+                                                        title="Delete document"
+                                                        disabled={savingFolderKey !== null ||
+                                                            deletingFolderKey !== null ||
+                                                            savingDocumentId !== null ||
+                                                            deletingDocumentId !== null}
+                                                        onclick={() =>
+                                                            void handleDeleteDocumentRow(
+                                                                row.result.document,
+                                                            )}
+                                                    >
+                                                        <Trash2 size={12} strokeWidth={2.1} />
+                                                    </button>
+                                                {/if}
+                                            </div>
+                                        {/if}
+                                    </div>
                                 </div>
                             {/if}
                         {/each}
@@ -980,6 +1998,18 @@
 
 <style>
     .search-workspace {
+        --search-result-block-gap: 2px;
+        --search-result-padding-y: 6px;
+        --search-row-padding-x: 12px;
+        --search-row-radius: 12px;
+        --search-tree-row-min-height: 48px;
+        --search-row-hover-bg: color-mix(
+            in srgb,
+            var(--surface-elevated) 78%,
+            transparent
+        );
+        --search-row-title-size: 0.98rem;
+        --search-row-meta-size: 0.8rem;
         padding: 24px clamp(18px, 4vw, 56px) 40px;
         min-height: 70vh;
     }
@@ -1015,12 +2045,20 @@
     }
 
     .search-workspace__input::placeholder {
-        color: var(--text-placeholder);
+        color: color-mix(in srgb, var(--text-placeholder) 20%, transparent);
+    }
+
+    .search-workspace__input:focus::placeholder {
+        color: transparent;
     }
 
     .search-workspace__results {
         display: grid;
         gap: 0;
+    }
+
+    .search-workspace__results--list {
+        gap: var(--search-result-block-gap);
     }
 
     .search-workspace__results--compact {
@@ -1051,6 +2089,46 @@
         display: inline-flex;
         align-items: center;
         gap: 2px;
+    }
+
+    .search-workspace__toolbar-action {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        transition: color 120ms ease;
+        font: inherit;
+    }
+
+    .search-workspace__toolbar-action:hover,
+    .search-workspace__toolbar-action:focus-visible {
+        color: var(--text);
+        outline: none;
+    }
+
+    .search-workspace__toolbar-action:disabled {
+        color: var(--text-placeholder);
+        cursor: not-allowed;
+    }
+
+    .search-workspace__toolbar-action--subtle {
+        color: color-mix(in srgb, var(--accent) 36%, var(--text-soft));
+    }
+
+    .search-workspace__toolbar-action--icon {
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+    }
+
+    .search-workspace__toolbar-action--icon:hover,
+    .search-workspace__toolbar-action--icon:focus-visible {
+        background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
     }
 
     .search-workspace__view-button {
@@ -1100,19 +2178,37 @@
         align-items: center;
         gap: 12px;
         width: 100%;
-        padding: 16px 0;
+        padding: var(--search-result-padding-y) var(--search-row-padding-x);
         border: 0;
-        border-radius: 0;
+        border-radius: var(--search-row-radius);
         background: transparent;
         color: var(--text);
         text-align: left;
         cursor: pointer;
-        transition: color 120ms ease;
+        transition:
+            background 140ms ease,
+            color 120ms ease;
     }
 
     .search-result:hover,
+    .search-result--hovered {
+        background: var(--search-row-hover-bg);
+        color: var(--text);
+    }
+
     .search-result.selected {
         color: var(--text);
+    }
+
+    .search-result-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+    }
+
+    .search-result--editing {
+        cursor: default;
     }
 
     .search-result__content {
@@ -1123,11 +2219,11 @@
 
     .search-result__title {
         font-weight: 500;
-        font-size: 1.02rem;
+        font-size: var(--search-row-title-size);
     }
 
     .search-result__meta {
-        font-size: 0.82rem;
+        font-size: var(--search-row-meta-size);
         color: var(--muted);
     }
 
@@ -1136,6 +2232,10 @@
         justify-self: end;
         min-width: 0;
         max-width: min(100%, 22rem);
+    }
+
+    .search-result__folder-path :global(.folder-path-badge) {
+        background: transparent;
     }
 
     .search-explorer {
@@ -1151,7 +2251,13 @@
         padding-bottom: 2px;
     }
 
-    .search-explorer__up-button,
+    .search-explorer__toolbar-start {
+        display: inline-flex;
+        align-items: center;
+        gap: 12px;
+        min-width: 0;
+    }
+
     .search-explorer__crumb {
         display: inline-flex;
         align-items: center;
@@ -1164,13 +2270,6 @@
         transition: color 120ms ease;
     }
 
-    .search-explorer__up-button:disabled {
-        color: var(--text-placeholder);
-        cursor: default;
-    }
-
-    .search-explorer__up-button:not(:disabled):hover,
-    .search-explorer__up-button:not(:disabled):focus-visible,
     .search-explorer__crumb:hover,
     .search-explorer__crumb:focus-visible,
     .search-explorer__crumb--active {
@@ -1197,7 +2296,19 @@
 
     .search-explorer__list {
         display: grid;
-        gap: 2px;
+        gap: var(--search-result-block-gap);
+    }
+
+    .search-explorer__entry {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        border-radius: 12px;
+    }
+
+    .search-explorer__entry--drop-target .search-explorer__item {
+        background: var(--surface-overlay-medium);
     }
 
     .search-explorer__item {
@@ -1205,10 +2316,12 @@
         align-items: center;
         justify-content: space-between;
         gap: 12px;
+        min-width: 0;
+        flex: 1 1 auto;
         width: 100%;
-        padding: 10px 0;
+        padding: var(--search-result-padding-y) var(--search-row-padding-x);
         border: 0;
-        border-radius: 0;
+        border-radius: var(--search-row-radius);
         background: transparent;
         color: var(--text);
         text-align: left;
@@ -1219,12 +2332,21 @@
     }
 
     .search-explorer__item:hover,
+    .search-explorer__item--hovered {
+        background: var(--search-row-hover-bg);
+        color: var(--text);
+    }
+
     .search-explorer__item.selected {
         color: var(--text);
     }
 
-    .search-explorer__item--drop-target {
-        background: var(--surface-overlay-medium);
+    .search-explorer__item:disabled {
+        cursor: default;
+    }
+
+    .search-explorer__item--editing {
+        cursor: default;
     }
 
     .search-explorer__item-content {
@@ -1238,7 +2360,7 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-size: 1rem;
+        font-size: var(--search-row-title-size);
         font-weight: 500;
     }
 
@@ -1248,7 +2370,7 @@
 
     .search-explorer__item-meta {
         color: var(--muted);
-        font-size: 0.8rem;
+        font-size: var(--search-row-meta-size);
     }
 
     .search-explorer__item-accessory {
@@ -1259,22 +2381,21 @@
 
     .search-tree {
         display: grid;
-        gap: 0;
+        gap: var(--search-result-block-gap);
     }
 
     .search-tree__row {
         display: grid;
-        grid-template-columns: 16px minmax(0, 1fr);
-        align-items: start;
-        gap: 3px;
+        grid-template-columns: 20px minmax(0, 1fr);
+        align-items: center;
+        gap: 6px;
         padding-left: calc(var(--tree-depth, 0) * 18px);
     }
 
     .search-tree__toggle,
     .search-tree__toggle-spacer {
-        width: 16px;
-        height: 16px;
-        margin-top: 8px;
+        width: 20px;
+        height: 20px;
         border-radius: 6px;
         flex-shrink: 0;
     }
@@ -1285,7 +2406,7 @@
         justify-content: center;
         border: 0;
         background: transparent;
-        color: color-mix(in srgb, var(--accent) 42%, var(--text-soft));
+        color: color-mix(in srgb, var(--accent-strong) 54%, var(--text));
         cursor: pointer;
         transition:
             background 120ms ease,
@@ -1295,23 +2416,38 @@
     .search-tree__toggle:hover,
     .search-tree__toggle:focus-visible {
         background: color-mix(in srgb, var(--line) 50%, transparent);
-        color: color-mix(in srgb, var(--accent-strong) 68%, var(--text));
+        color: color-mix(in srgb, var(--accent-strong) 82%, var(--text));
         outline: none;
     }
 
     .search-tree__folder {
         display: flex;
+        flex: 1 1 auto;
         align-items: center;
-        justify-content: space-between;
-        gap: 10px;
-        width: 100%;
+        justify-content: flex-start;
+        gap: 12px;
+        min-height: var(--search-tree-row-min-height);
         min-width: 0;
-        padding: 6px 12px 6px 8px;
+        padding: var(--search-result-padding-y) var(--search-row-padding-x);
         color: color-mix(in srgb, var(--accent) 26%, var(--muted));
-        border-radius: 10px;
+        border-radius: var(--search-row-radius);
+        cursor: pointer;
         transition:
-            background 120ms ease,
+            background 140ms ease,
             color 120ms ease;
+    }
+
+    .search-tree__folder-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        width: 100%;
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+
+    .search-tree__folder--editing {
+        cursor: default;
     }
 
     .search-tree__folder--drop-target {
@@ -1319,8 +2455,23 @@
         color: color-mix(in srgb, var(--accent-strong) 46%, var(--text));
     }
 
+    .search-tree__folder--editing {
+        background: color-mix(in srgb, var(--surface-elevated) 82%, transparent);
+    }
+
+    .search-tree__folder-row:hover .search-tree__folder {
+        background: var(--search-row-hover-bg);
+    }
+
     .search-tree__folder--drop-target .search-tree__folder-meta {
         color: var(--muted);
+    }
+
+    .search-tree__folder-content {
+        display: grid;
+        gap: 3px;
+        flex: 1 1 auto;
+        min-width: 0;
     }
 
     .search-tree__folder-name {
@@ -1329,23 +2480,103 @@
         text-overflow: ellipsis;
         white-space: nowrap;
         color: color-mix(in srgb, var(--accent) 48%, var(--text));
-        font-size: 0.94rem;
+        font-size: var(--search-row-title-size);
         font-weight: 500;
     }
 
     .search-tree__folder-meta {
-        color: color-mix(in srgb, var(--accent) 58%, var(--muted));
-        font-size: 0.74rem;
-        letter-spacing: 0.04em;
-        text-transform: uppercase;
+        color: var(--muted);
+        font-size: var(--search-row-meta-size);
         white-space: nowrap;
     }
 
-    .search-tree__document {
-        width: 100%;
-        padding: 8px 12px;
+    .search-folder-management__actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 120ms ease;
+    }
+
+    .search-folder-management__actions--tree {
+        justify-content: flex-end;
+        flex: 0 0 92px;
+        min-width: 92px;
+    }
+
+    .search-folder-management__actions--visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+
+    .search-folder-management__action {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 28px;
+        height: 28px;
+        padding: 0;
         border: 0;
-        border-radius: 12px;
+        border-radius: 8px;
+        background: transparent;
+        color: var(--muted);
+        cursor: pointer;
+        transition:
+            background 120ms ease,
+            color 120ms ease;
+    }
+
+    .search-folder-management__action:hover,
+    .search-folder-management__action:focus-visible {
+        background: color-mix(in srgb, var(--surface-elevated) 72%, transparent);
+        color: var(--text);
+        outline: none;
+    }
+
+    .search-folder-management__action--danger:hover,
+    .search-folder-management__action--danger:focus-visible {
+        color: var(--accent-strong);
+    }
+
+    .search-folder-management__action:disabled {
+        color: var(--text-placeholder);
+        cursor: not-allowed;
+    }
+
+    .search-folder-management__input {
+        width: 100%;
+        min-width: 0;
+        padding: 0;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: var(--text);
+        font: inherit;
+        font-weight: 500;
+    }
+
+    .search-folder-management__input--tree {
+        flex: 1 1 auto;
+        min-width: 0;
+        color: color-mix(in srgb, var(--accent) 48%, var(--text));
+        font-size: 0.94rem;
+    }
+
+    .search-folder-management__input--document {
+        font-size: var(--search-row-title-size);
+    }
+
+    .search-folder-management__input::placeholder {
+        color: var(--text-placeholder);
+    }
+
+    .search-tree__document {
+        flex: 1 1 auto;
+        min-height: var(--search-tree-row-min-height);
+        padding: var(--search-result-padding-y) var(--search-row-padding-x);
+        border: 0;
+        border-radius: var(--search-row-radius);
         background: transparent;
         color: var(--text);
         text-align: left;
@@ -1355,14 +2586,26 @@
             color 120ms ease;
     }
 
+    .search-tree__document-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-width: 0;
+        width: 100%;
+    }
+
     .search-tree__document:hover,
-    .search-tree__document.selected {
-        background: color-mix(
-            in srgb,
-            var(--surface-elevated) 78%,
-            transparent
-        );
+    .search-tree__document--hovered {
+        background: var(--search-row-hover-bg);
         color: var(--text);
+    }
+
+    .search-tree__document.selected {
+        color: var(--text);
+    }
+
+    .search-tree__document--editing {
+        cursor: default;
     }
 
     .search-tree__document--dragging {
@@ -1380,13 +2623,13 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
-        font-size: 0.98rem;
+        font-size: var(--search-row-title-size);
         font-weight: 500;
     }
 
     .search-tree__document-meta {
         color: var(--muted);
-        font-size: 0.8rem;
+        font-size: var(--search-row-meta-size);
     }
 
     @media (max-width: 1180px) {
@@ -1423,14 +2666,26 @@
             align-items: flex-start;
         }
 
+        .search-explorer__toolbar-start {
+            flex-wrap: wrap;
+        }
+
         .search-explorer__breadcrumbs {
             justify-content: flex-start;
         }
 
-        .search-tree__folder {
+        .search-explorer__entry,
+        .search-tree__folder-row {
             align-items: flex-start;
-            flex-direction: column;
-            gap: 4px;
+        }
+
+        .search-folder-management__actions {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        .search-tree__folder {
+            align-items: center;
         }
     }
 </style>

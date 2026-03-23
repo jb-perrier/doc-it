@@ -1,5 +1,5 @@
 import type { FolderSummary } from '$lib/types';
-import { jsonRequest, requestJson } from '$lib/api/client';
+import { jsonRequest, requestJson, requestVoid } from '$lib/api/client';
 
 type FolderPayload = {
     id: string;
@@ -45,6 +45,10 @@ export async function renameFolder(
         jsonRequest('PATCH', { name }),
     );
     return mapFolderSummary(payload.folder);
+}
+
+export async function deleteFolder(folderId: string): Promise<void> {
+    await requestVoid(`/folders/${folderId}`, jsonRequest('DELETE'));
 }
 
 function mapFolderSummary(payload: FolderPayload): FolderSummary {

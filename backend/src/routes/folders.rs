@@ -9,6 +9,7 @@ use axum::{
 
 use crate::{
     app_state::AppState,
+    db::folders::DeleteFolderResult,
     models::api::{
         AppError, CreateFolderRequest, FolderListResponse, FolderPayload, FolderResponse,
         RenameFolderRequest,
@@ -19,7 +20,7 @@ use crate::{
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/folders", get(list_folders).post(create_folder))
-        .route("/folders/{id}", patch(rename_folder))
+    .route("/folders/{id}", patch(rename_folder).delete(delete_folder))
 }
 
 async fn list_folders(
@@ -62,11 +63,28 @@ async fn rename_folder(
         .db
         .rename_folder(&folder_id, &payload.name)
         .await?
-        .ok_or(AppError::NotFound)?;
+        .ok_or(AppError::FolderNotFound)?;
 
     Ok(Json(FolderResponse {
         folder: map_folder_payload(folder),
     }))
+}
+
+async fn delete_folder(
+    State(state): State<Arc<AppState>>,
+    Path(folder_id): Path<String>,
+) -> Result<StatusCode, AppError> {
+    match state.db.delete_folder(&folder_id).await? {
+        DeleteFolderResult::Deleted => Ok(StatusCode::NO_CONTENT),
+        DeleteFolderResult::NotFound => Err(AppError::FolderNotFound),
+        DeleteFolderResult::Protected => Err(AppError::BadRequest(
+            "Workspace cannot be deleted".to_string(),
+        )),
+        DeleteFolderResult::ContainsDocuments => Err(AppError::BadRequest(
+            "Move or delete documents inside this folder before removing it"
+                .to_string(),
+        )),
+    }
 }
 
 fn map_folder_payload(folder: FolderRow) -> FolderPayload {

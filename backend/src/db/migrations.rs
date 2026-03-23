@@ -19,6 +19,10 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await?;
 
+    sqlx::raw_sql(include_str!("../../migrations/004_inbox_to_root.sql"))
+        .execute(pool)
+        .await?;
+
     Ok(())
 }
 

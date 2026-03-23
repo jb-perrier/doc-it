@@ -12,6 +12,7 @@ type DocumentPayload = {
 
 type DocumentResponse = {
 	document: DocumentPayload;
+	snapshot?: string;
 };
 
 type ErrorEnvelope = {
@@ -22,6 +23,7 @@ type ErrorEnvelope = {
 
 export const load: PageLoad = async ({ params, fetch }) => {
 	let document: DocumentRecord | null = null;
+	let snapshot: string | null = null;
 	let loadError = '';
 
 	try {
@@ -34,6 +36,7 @@ export const load: PageLoad = async ({ params, fetch }) => {
 		}
 
 		document = mapDocumentRecord((payload as DocumentResponse).document);
+		snapshot = (payload as DocumentResponse).snapshot ?? null;
 	} catch (error) {
 		loadError = error instanceof Error ? error.message : 'Failed to open document';
 	}
@@ -41,6 +44,7 @@ export const load: PageLoad = async ({ params, fetch }) => {
 	return {
 		id: params.id,
 		document,
+		snapshot,
 		loadError
 	};
 };

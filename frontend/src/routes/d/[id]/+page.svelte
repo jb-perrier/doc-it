@@ -22,6 +22,7 @@
     import { getFolderPathSegments } from "$lib/folders/path";
     import {
         createSubfolderInCollections,
+        deleteFolderInCollections,
         moveDocumentWithinFolders,
         renameFolderInCollections,
     } from "$lib/folders/operations";
@@ -44,6 +45,7 @@
         data: {
             id: string;
             document: DocumentRecord | null;
+            snapshot: string | null;
             loadError: string;
         };
     }>();
@@ -52,8 +54,8 @@
     let session = $state<SessionProfile | null>(null);
     let peers = $state<PeerPresence[]>([]);
     let errorMessage = $state("");
+    let syncErrorMessage = $state("");
     let loading = $state(true);
-    let syncReady = $state(false);
     let titleDraft = $state("");
     let activeTopbarMenu = $state<string | null>(null);
     let searchModeOpen = $state(false);
@@ -131,57 +133,35 @@
         const nextYdoc = new Y.Doc();
         ydoc = nextYdoc;
         const initialDocument = data.document;
+        const initialSnapshot = data.snapshot;
         const initialError = data.loadError;
 
-        try {
-            const nextSession = await getSessionProfile();
-            const nextFolders = await listFolders().catch(() => []);
-
-            if (isCancelled()) {
-                nextYdoc.destroy();
-                return;
-            }
-
-            if (!initialDocument) {
-                errorMessage = initialError || "Failed to open document";
-                loading = false;
-                return;
-            }
-
-            session = nextSession;
-            folders = nextFolders;
-            usernameDraft = nextSession.name;
-            document = initialDocument;
-            titleDraft = initialDocument.title;
-
-            await connectRealtimeClient(
-                documentId,
-                nextSession,
-                nextYdoc,
-                isCancelled,
-            );
-
-            if (!isCancelled()) {
-                loading = false;
-            }
-        } catch (error) {
-            if (isCancelled()) {
-                return;
-            }
-
-            errorMessage =
-                error instanceof Error
-                    ? error.message
-                    : "Failed to open document";
+        if (!initialDocument) {
+            errorMessage = initialError || "Failed to open document";
             loading = false;
+            return;
         }
+
+        if (initialSnapshot) {
+            try {
+                Y.applyUpdate(nextYdoc, decodeSnapshot(initialSnapshot));
+            } catch {
+                syncErrorMessage = "Failed to preload document content";
+            }
+        }
+
+        document = initialDocument;
+        titleDraft = initialDocument.title;
+        loading = false;
+
+        void loadFolders(isCancelled);
+        void initializeRealtimeSession(documentId, nextYdoc, isCancelled);
     }
 
     function destroyActiveDocumentSession() {
         client?.disconnect();
         client = null;
         peers = [];
-        syncReady = false;
 
         if (renameTimer) {
             clearTimeout(renameTimer);
@@ -195,12 +175,26 @@
         document = null;
         peers = [];
         errorMessage = "";
+        syncErrorMessage = "";
         loading = true;
-        syncReady = false;
         titleDraft = "";
+        searchDocuments = null;
+        searchFolders = null;
+        searchLoading = false;
+        searchErrorMessage = "";
         usernameErrorMessage = "";
         activeTopbarMenu = null;
         closeSearchMode({ restoreScroll: false });
+    }
+
+    async function loadFolders(isCancelled: () => boolean) {
+        const nextFolders = await listFolders().catch(() => []);
+
+        if (isCancelled()) {
+            return;
+        }
+
+        folders = nextFolders;
     }
 
     async function getSessionProfile() {
@@ -217,6 +211,51 @@
         }
 
         return sessionPromise;
+    }
+
+    async function initializeRealtimeSession(
+        documentId: string,
+        targetDoc: Y.Doc,
+        isCancelled: () => boolean,
+    ) {
+        try {
+            const nextSession = await getSessionProfile();
+
+            if (isCancelled()) {
+                return;
+            }
+
+            session = nextSession;
+            usernameDraft = nextSession.name;
+            syncErrorMessage = "";
+
+            await connectRealtimeClient(
+                documentId,
+                nextSession,
+                targetDoc,
+                isCancelled,
+            );
+        } catch (error) {
+            if (isCancelled()) {
+                return;
+            }
+
+            syncErrorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to connect to live document";
+        }
+    }
+
+    function decodeSnapshot(value: string): Uint8Array {
+        const binary = atob(value);
+        const output = new Uint8Array(binary.length);
+
+        for (let index = 0; index < binary.length; index += 1) {
+            output[index] = binary.charCodeAt(index);
+        }
+
+        return output;
     }
 
     async function connectRealtimeClient(
@@ -244,8 +283,6 @@
                     if (isCancelled()) {
                         return;
                     }
-
-                    syncReady = true;
                 },
             },
         );
@@ -422,6 +459,16 @@
         return nextState.created;
     }
 
+    async function handleDeleteFolder(folderId: string) {
+        const nextState = await deleteFolderInCollections(
+            { folders, searchFolders },
+            folderId,
+        );
+
+        folders = nextState.folders;
+        searchFolders = nextState.searchFolders;
+    }
+
     async function handleUsernameSubmit() {
         if (!session || usernameSaving) {
             return;
@@ -451,7 +498,6 @@
             if (document) {
                 client?.disconnect();
                 client = null;
-                syncReady = false;
                 await connectRealtimeClient(data.id, nextSession, ydoc);
             }
 
@@ -521,7 +567,9 @@
                     : listDocuments(),
                 searchFolders
                     ? Promise.resolve(searchFolders)
-                    : listFolders().catch(() => []),
+                    : folders.length > 0
+                      ? Promise.resolve(folders)
+                      : listFolders().catch(() => []),
             ]);
 
             searchDocuments = nextDocuments;
@@ -537,9 +585,7 @@
     }
 
     function getSearchResults() {
-        return getDocumentSearchResults(searchDocuments ?? [], searchQuery, {
-            excludeDocumentId: data.id,
-        });
+        return getDocumentSearchResults(searchDocuments ?? [], searchQuery);
     }
 
     function getDocumentFolderPath() {
@@ -608,6 +654,46 @@
 
         if (document?.id === updated.id) {
             document = updated;
+        }
+    }
+
+    async function handleRenameSearchDocument(
+        documentId: string,
+        title: string,
+    ) {
+        const updated = await renameDocumentTitle(documentId, title);
+
+        searchDocuments = (searchDocuments ?? []).map((searchDocument) =>
+            searchDocument.id === updated.id ? updated : searchDocument,
+        );
+
+        if (document?.id === updated.id) {
+            document = { ...document, ...updated };
+            titleDraft = updated.title;
+        }
+
+        return updated;
+    }
+
+    async function handleDeleteSearchDocument(documentId: string) {
+        await deleteDocument(documentId);
+
+        searchDocuments = (searchDocuments ?? []).filter(
+            (searchDocument) => searchDocument.id !== documentId,
+        );
+
+        if (document?.id !== documentId) {
+            return;
+        }
+
+        destroyActiveDocumentSession();
+        document = null;
+        loading = false;
+
+        try {
+            await goto("/", { replaceState: true, invalidateAll: true });
+        } catch {
+            window.location.assign("/");
         }
     }
 
@@ -703,12 +789,20 @@
                     onOpenResult={(target) => void openSearchResult(target)}
                     onHoverResult={handleSearchResultHover}
                     onMoveResultToFolder={handleMoveSearchResult}
+                    onCreateSubfolder={handleCreateSubfolder}
+                    onRenameFolder={handleRenameFolder}
+                    onDeleteFolder={handleDeleteFolder}
+                    onRenameDocument={handleRenameSearchDocument}
+                    onDeleteDocument={handleDeleteSearchDocument}
                 />
             {:else}
                 <div class="editor-stage">
-                    {#if !loading && errorMessage}
+                    {#if !loading && errorMessage && !document}
                         <p class="status-card error">{errorMessage}</p>
                     {:else if !loading && document}
+                        {#if syncErrorMessage}
+                            <p class="status-card">{syncErrorMessage}</p>
+                        {/if}
                         {#key data.id}
                             <EditorShell
                                 title={titleDraft}

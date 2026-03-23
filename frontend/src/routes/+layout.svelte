@@ -52,6 +52,7 @@
 		--surface-overlay: rgba(255, 245, 236, 0.035);
 		--surface-overlay-medium: rgba(255, 245, 236, 0.065);
 		--surface-overlay-strong: rgba(255, 245, 236, 0.1);
+		--surface-elevated: var(--surface-overlay-strong);
 		--surface-overlay-border: rgba(255, 245, 236, 0.12);
 		--text-soft: rgba(239, 236, 231, 0.7);
 		--code-bg: #101114;
@@ -94,6 +95,7 @@
 		--surface-overlay: rgba(29, 45, 72, 0.045);
 		--surface-overlay-medium: rgba(29, 45, 72, 0.085);
 		--surface-overlay-strong: rgba(29, 45, 72, 0.12);
+		--surface-elevated: var(--surface-overlay-strong);
 		--surface-overlay-border: rgba(29, 45, 72, 0.15);
 		--text-soft: rgba(22, 32, 51, 0.68);
 		--code-bg: #eaf0f7;

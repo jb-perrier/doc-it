@@ -76,6 +76,8 @@ pub struct DocumentListResponse {
 #[derive(Debug, Serialize)]
 pub struct DocumentResponse {
     pub document: DocumentPayload,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -103,6 +105,8 @@ pub struct ErrorPayload {
 pub enum AppError {
     #[error("Document not found")]
     NotFound,
+    #[error("Folder not found")]
+    FolderNotFound,
     #[error("{0}")]
     BadRequest(String),
     #[error(transparent)]
@@ -121,14 +125,24 @@ impl IntoResponse for AppError {
                 "document_not_found",
                 self.to_string(),
             ),
+            Self::FolderNotFound => (
+                StatusCode::NOT_FOUND,
+                "folder_not_found",
+                self.to_string(),
+            ),
             Self::BadRequest(message) => (StatusCode::BAD_REQUEST, "bad_request", message),
             Self::Sqlx(error) => {
-                tracing::error!(?error, "database error");
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "internal_error",
-                    "Unexpected database failure".to_string(),
-                )
+                if let Some(message) = client_database_message(&error) {
+                    tracing::warn!(?error, "database constraint rejected client request");
+                    (StatusCode::BAD_REQUEST, "bad_request", message)
+                } else {
+                    tracing::error!(?error, "database error");
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "internal_error",
+                        "Unexpected database failure".to_string(),
+                    )
+                }
             }
             Self::Serde(error) => {
                 tracing::warn!(?error, "invalid json payload");
@@ -152,5 +166,56 @@ impl IntoResponse for AppError {
             }),
         )
             .into_response()
+    }
+}
+
+fn client_database_message(error: &sqlx::Error) -> Option<String> {
+    let sqlx::Error::Database(database_error) = error else {
+        return None;
+    };
+
+    let message = database_error.message();
+    if message.contains("FOREIGN KEY constraint failed") {
+        return Some("Referenced folder does not exist".to_string());
+    }
+
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppError;
+
+    use axum::{body::to_bytes, http::StatusCode, response::IntoResponse};
+    use serde_json::Value;
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    use crate::db::{Database, migrations::run_migrations};
+
+    #[tokio::test]
+    async fn invalid_folder_reference_maps_to_bad_request() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        run_migrations(&pool).await.expect("run migrations");
+        let db = Database::new(pool);
+
+        let error = db
+            .create_document("Bad folder", Some("missing-folder"))
+            .await
+            .expect_err("invalid folder should fail");
+
+        let response = AppError::from(error).into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("read response body");
+        let payload: Value = serde_json::from_slice(&body).expect("parse response body");
+
+        assert_eq!(payload["error"]["code"], "bad_request");
+        assert_eq!(payload["error"]["message"], "Referenced folder does not exist");
     }
 }

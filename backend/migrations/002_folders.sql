@@ -18,12 +18,3 @@ VALUES (
   STRFTIME('%Y-%m-%dT%H:%M:%SZ', 'now'),
   STRFTIME('%Y-%m-%dT%H:%M:%SZ', 'now')
 );
-
-INSERT OR IGNORE INTO folders (id, parent_folder_id, name, created_at, updated_at)
-VALUES (
-  'workspace-inbox',
-  'workspace-root',
-  'Inbox',
-  STRFTIME('%Y-%m-%dT%H:%M:%SZ', 'now'),
-  STRFTIME('%Y-%m-%dT%H:%M:%SZ', 'now')
-);

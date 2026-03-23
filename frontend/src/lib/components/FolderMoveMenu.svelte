@@ -580,6 +580,7 @@
     }
 
     .folder-move-menu__trigger :global(.folder-path-badge) {
+        background: transparent;
         transition:
             color 120ms ease,
             background 120ms ease;
@@ -591,11 +592,7 @@
     .folder-move-menu__summary:hover
         .folder-move-menu__trigger
         :global(.folder-path-badge) {
-        background: color-mix(
-            in srgb,
-            var(--surface-elevated) 88%,
-            transparent
-        );
+        background: transparent;
         color: var(--text);
     }
 

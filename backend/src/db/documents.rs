@@ -11,7 +11,7 @@ use crate::{
     },
 };
 
-use super::folders::DEFAULT_FOLDER_ID;
+use super::folders::ROOT_FOLDER_ID;
 
 const COLLAB_FIELD: &str = "content";
 
@@ -28,9 +28,9 @@ impl Database {
             ORDER BY updated_at DESC
             "#,
         )
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(folder_id)
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(folder_id)
         .fetch_all(self.pool())
         .await?;
@@ -54,7 +54,7 @@ impl Database {
     ) -> Result<DocumentRow, sqlx::Error> {
         let now = iso_now();
         let document_id = Uuid::now_v7().to_string();
-        let folder_id = folder_id.unwrap_or(DEFAULT_FOLDER_ID).to_string();
+        let folder_id = folder_id.unwrap_or(ROOT_FOLDER_ID).to_string();
         let title = sanitize_title(title);
         let initial_snapshot = empty_snapshot();
         let mut tx = self.pool().begin().await?;
@@ -108,7 +108,7 @@ impl Database {
             WHERE id = ?
             "#,
         )
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(source_document_id)
         .fetch_optional(self.pool())
         .await?;
@@ -171,7 +171,7 @@ impl Database {
             WHERE id = ?
             "#,
         )
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(document_id)
         .fetch_optional(self.pool())
         .await?;
@@ -250,7 +250,7 @@ impl Database {
             WHERE id = ?
             "#,
         )
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(document_id)
         .fetch_one(self.pool())
         .await?;
@@ -294,7 +294,7 @@ impl Database {
             WHERE d.id = ?
             "#,
         )
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(fallback_snapshot)
         .bind(document_id)
         .fetch_optional(self.pool())
@@ -361,7 +361,7 @@ impl Database {
 
 async fn row_folder_id(db: &Database, document_id: &str) -> Result<String, sqlx::Error> {
     let row = sqlx::query("SELECT COALESCE(folder_id, ?) AS folder_id FROM documents WHERE id = ?")
-        .bind(DEFAULT_FOLDER_ID)
+        .bind(ROOT_FOLDER_ID)
         .bind(document_id)
         .fetch_one(db.pool())
         .await?;
@@ -452,7 +452,7 @@ mod tests {
             .expect("room seed exists");
 
         assert_eq!(seed.document.id, document.id);
-        assert_eq!(seed.document.folder_id, super::DEFAULT_FOLDER_ID);
+        assert_eq!(seed.document.folder_id, super::ROOT_FOLDER_ID);
 
         let restored = Doc::new();
         let update = Update::decode_v1(&seed.snapshot.yjs_snapshot).expect("decode snapshot");
@@ -534,8 +534,49 @@ mod tests {
             .expect("room seed exists");
 
         assert_eq!(seed.document.id, "legacy-doc");
-        assert_eq!(seed.document.folder_id, super::DEFAULT_FOLDER_ID);
+        assert_eq!(seed.document.folder_id, super::ROOT_FOLDER_ID);
         assert!(!seed.snapshot.yjs_snapshot.is_empty());
+    }
+
+    #[tokio::test]
+    async fn migrations_move_legacy_inbox_documents_to_workspace_root() {
+        let pool = test_db().await;
+        let db = Database::new(pool.clone());
+        let now = "2026-03-18T00:00:00Z";
+
+        sqlx::query(
+            "INSERT INTO folders (id, parent_folder_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("workspace-inbox")
+        .bind(super::ROOT_FOLDER_ID)
+        .bind("Inbox")
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert legacy inbox folder");
+
+        sqlx::query(
+            "INSERT INTO documents (id, folder_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind("legacy-inbox-doc")
+        .bind("workspace-inbox")
+        .bind("Legacy inbox doc")
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert inbox document");
+
+        run_migrations(&pool).await.expect("rerun migrations");
+
+        let migrated = db
+            .get_document("legacy-inbox-doc")
+            .await
+            .expect("get migrated document")
+            .expect("migrated document exists");
+
+        assert_eq!(migrated.folder_id, super::ROOT_FOLDER_ID);
     }
 
     #[tokio::test]

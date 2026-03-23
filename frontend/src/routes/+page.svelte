@@ -3,10 +3,21 @@
     import { onMount } from "svelte";
     import { Search, Sun, Moon, Plus } from "lucide-svelte";
 
-    import { createDocument, listDocuments } from "$lib/api/documents";
+    import {
+        createDocument,
+        deleteDocument,
+        listDocuments,
+        renameDocumentTitle,
+    } from "$lib/api/documents";
     import { listFolders } from "$lib/api/folders";
+    import DocItLogo from "$lib/components/DocItLogo.svelte";
     import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
-    import { moveDocumentWithinFolders } from "$lib/folders/operations";
+    import {
+        createSubfolderInCollections,
+        deleteFolderInCollections,
+        moveDocumentWithinFolders,
+        renameFolderInCollections,
+    } from "$lib/folders/operations";
     import { getFolderPathSegments } from "$lib/folders/path";
     import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
     import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
@@ -122,6 +133,54 @@
         );
     }
 
+    async function handleRenameDocument(documentId: string, title: string) {
+        const updated = await renameDocumentTitle(documentId, title);
+
+        documents = documents.map((document) =>
+            document.id === updated.id ? updated : document,
+        );
+
+        return updated;
+    }
+
+    async function handleDeleteSearchDocument(documentId: string) {
+        await deleteDocument(documentId);
+
+        documents = documents.filter((document) => document.id !== documentId);
+    }
+
+    async function handleRenameFolder(folderId: string, name: string) {
+        const nextState = await renameFolderInCollections(
+            { folders, searchFolders: folders },
+            folderId,
+            name,
+        );
+
+        folders = nextState.folders;
+
+        return nextState.updated;
+    }
+
+    async function handleCreateSubfolder(parentFolderId: string) {
+        const nextState = await createSubfolderInCollections(
+            { folders, searchFolders: folders },
+            parentFolderId,
+        );
+
+        folders = nextState.folders;
+
+        return nextState.created;
+    }
+
+    async function handleDeleteFolder(folderId: string) {
+        const nextState = await deleteFolderInCollections(
+            { folders, searchFolders: folders },
+            folderId,
+        );
+
+        folders = nextState.folders;
+    }
+
     function handleSearchInputKeyDown(event: KeyboardEvent) {
         const results = getSearchResults();
 
@@ -221,6 +280,11 @@
 <WorkspaceShell>
     {#snippet leftRail()}
         <div class="topbar-left">
+            <a href="/" class="document-menu-brand" aria-label="Go to main page">
+                <span class="document-menu-brand__logo">
+                    <DocItLogo />
+                </span>
+            </a>
             <button
                 type="button"
                 class="menu-badge-button"
@@ -252,6 +316,11 @@
             onOpenResult={(target) => goto(`/d/${target.id}`)}
             onHoverResult={handleSearchResultHover}
             onMoveResultToFolder={handleMoveSearchResult}
+            onCreateSubfolder={handleCreateSubfolder}
+            onRenameFolder={handleRenameFolder}
+            onDeleteFolder={handleDeleteFolder}
+            onRenameDocument={handleRenameDocument}
+            onDeleteDocument={handleDeleteSearchDocument}
         />
     {/snippet}
 
@@ -289,3 +358,34 @@
         </div>
     {/snippet}
 </WorkspaceShell>
+
+<style>
+    .document-menu-brand {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        block-size: var(--menu-badge-height);
+        border-radius: 10px;
+        color: inherit;
+        text-decoration: none;
+        transition:
+            background 120ms ease,
+            color 120ms ease;
+    }
+
+    .document-menu-brand:hover,
+    .document-menu-brand:focus-visible {
+        background: var(--surface-overlay-medium);
+        outline: none;
+    }
+
+    .document-menu-brand__logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: clamp(72px, 11vw, 96px);
+        block-size: 100%;
+        line-height: 1;
+        color: var(--text);
+    }
+</style>

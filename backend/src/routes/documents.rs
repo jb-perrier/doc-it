@@ -6,6 +6,7 @@ use axum::{
     http::StatusCode,
     routing::{get, patch, post},
 };
+use base64::{Engine, engine::general_purpose::STANDARD as Base64};
 use serde::Deserialize;
 
 use crate::{
@@ -71,6 +72,7 @@ async fn create_document(
                 created_at: Some(document.created_at),
                 updated_at: document.updated_at,
             },
+            snapshot: None,
         }),
     ))
 }
@@ -85,6 +87,17 @@ async fn get_document(
         .await?
         .ok_or(AppError::NotFound)?;
 
+    let snapshot = match state.rooms.current_snapshot(&document_id).await {
+        Some(snapshot) => snapshot,
+        None => state
+            .db
+            .load_room_seed(&document_id)
+            .await?
+            .ok_or(AppError::NotFound)?
+            .snapshot
+            .yjs_snapshot,
+    };
+
     Ok(Json(DocumentResponse {
         document: DocumentPayload {
             id: document.id,
@@ -93,6 +106,7 @@ async fn get_document(
             created_at: Some(document.created_at),
             updated_at: document.updated_at,
         },
+        snapshot: Some(Base64.encode(snapshot)),
     }))
 }
 
@@ -127,6 +141,7 @@ async fn duplicate_document(
                 created_at: Some(document.created_at),
                 updated_at: document.updated_at,
             },
+            snapshot: None,
         }),
     ))
 }
@@ -142,7 +157,10 @@ async fn rename_document(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    Ok(Json(DocumentResponse { document }))
+    Ok(Json(DocumentResponse {
+        document,
+        snapshot: None,
+    }))
 }
 
 async fn move_document_to_folder(
@@ -156,7 +174,10 @@ async fn move_document_to_folder(
         .await?
         .ok_or(AppError::NotFound)?;
 
-    Ok(Json(DocumentResponse { document }))
+    Ok(Json(DocumentResponse {
+        document,
+        snapshot: None,
+    }))
 }
 
 async fn delete_document(
@@ -169,5 +190,84 @@ async fn delete_document(
         return Err(AppError::NotFound);
     }
 
+    state.rooms.delete_room(&document_id).await;
+
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_document;
+    use std::sync::Arc;
+
+    use axum::{extract::{ws::Message, Path, State}, http::StatusCode};
+    use sqlx::sqlite::SqlitePoolOptions;
+    use tokio::sync::mpsc;
+
+    use crate::{
+        app_state::AppState,
+        db::{Database, migrations::run_migrations},
+        realtime::rooms::RoomManager,
+    };
+
+    async fn test_state() -> Arc<AppState> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .expect("connect in-memory sqlite");
+        run_migrations(&pool).await.expect("run migrations");
+
+        let db = Database::new(pool);
+        let rooms = RoomManager::new(db.clone());
+
+        Arc::new(AppState::new(db, rooms))
+    }
+
+    async fn expect_close(receiver: &mut mpsc::UnboundedReceiver<Message>) {
+        loop {
+            match receiver.recv().await {
+                Some(Message::Close(None)) => return,
+                Some(_) => continue,
+                None => panic!("expected close message"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn delete_document_closes_active_room_and_removes_snapshot_source() {
+        let state = test_state().await;
+        let document = state
+            .db
+            .create_document("Delete route", None)
+            .await
+            .expect("create document");
+
+        let room = state
+            .rooms
+            .get_or_create(&document.id)
+            .await
+            .expect("create room");
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        room.join(
+            "client-1".to_string(),
+            "Alice".to_string(),
+            "#111111".to_string(),
+            sender,
+        )
+        .await
+        .expect("join room");
+
+        let status = delete_document(
+            State(state.clone()),
+            Path(document.id.clone()),
+        )
+        .await
+        .expect("delete document");
+
+        assert_eq!(status, StatusCode::NO_CONTENT);
+        assert!(state.rooms.current_snapshot(&document.id).await.is_none());
+        assert!(state.db.get_document(&document.id).await.expect("query document").is_none());
+        expect_close(&mut receiver).await;
+    }
 }

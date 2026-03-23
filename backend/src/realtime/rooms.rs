@@ -87,6 +87,14 @@ impl RoomManager {
         }
     }
 
+    pub async fn delete_room(&self, document_id: &str) {
+        let room = self.rooms.write().await.remove(document_id);
+
+        if let Some(room) = room {
+            room.shutdown().await;
+        }
+    }
+
     async fn expire_stale_peers(&self) {
         let rooms = self.rooms.read().await;
         let list = rooms
@@ -246,6 +254,19 @@ impl Room {
 
     pub async fn remove_peer(self: &Arc<Self>, client_id: &str) {
         self.remove_peer_internal(client_id, false).await;
+    }
+
+    pub async fn shutdown(&self) {
+        self.save_ticket.fetch_add(1, Ordering::SeqCst);
+
+        let peers = {
+            let mut peers = self.peers.lock().await;
+            peers.drain().map(|(_, peer)| peer).collect::<Vec<_>>()
+        };
+
+        for peer in peers {
+            let _ = peer.sender.send(Message::Close(None));
+        }
     }
 
     async fn is_empty(&self) -> bool {
@@ -422,6 +443,16 @@ mod tests {
         fragment.get_string(&txn)
     }
 
+    async fn expect_close(receiver: &mut mpsc::UnboundedReceiver<Message>) {
+        loop {
+            match receiver.recv().await {
+                Some(Message::Close(None)) => return,
+                Some(_) => continue,
+                None => panic!("expected close message"),
+            }
+        }
+    }
+
     #[tokio::test]
     async fn removes_empty_rooms_and_keeps_reopened_state_isolated() {
         let db = test_db().await;
@@ -493,5 +524,34 @@ mod tests {
             .expect("room seed exists");
 
         assert_eq!(snapshot_text(&seed.snapshot.yjs_snapshot), expected_text);
+    }
+
+    #[tokio::test]
+    async fn delete_room_closes_peers_and_removes_room_without_persisting() {
+        let db = test_db().await;
+        let manager = RoomManager::new(db.clone());
+        let document = db
+            .create_document("Delete room", None)
+            .await
+            .expect("create document");
+
+        let room = manager
+            .get_or_create(&document.id)
+            .await
+            .expect("create room");
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        room.join(
+            "client-1".to_string(),
+            "Alice".to_string(),
+            "#111111".to_string(),
+            sender,
+        )
+        .await
+        .expect("join room");
+
+        manager.delete_room(&document.id).await;
+
+        assert!(manager.current_snapshot(&document.id).await.is_none());
+        expect_close(&mut receiver).await;
     }
 }
