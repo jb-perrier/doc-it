@@ -1,6 +1,4 @@
 <script lang="ts">
-    import { Folder } from "lucide-svelte";
-
     import type { FolderPathSegment } from "$lib/folders/path";
 
     type DisplaySegment = {
@@ -39,8 +37,6 @@
             ...trailingSegments,
         ] satisfies DisplaySegment[];
     });
-
-    const iconSize = $derived(size === "sm" ? 12 : 11);
 </script>
 
 {#if segments.length > 0}
@@ -50,7 +46,6 @@
         title={label ?? fullPath}
         aria-label={`Folder path: ${label ?? fullPath}`}
     >
-        <Folder size={iconSize} strokeWidth={2.15} />
         <span class="folder-path-badge__path">
             {#each displaySegments as segment, index (segment.id)}
                 {#if index > 0}
@@ -71,11 +66,9 @@
     .folder-path-badge {
         display: inline-flex;
         align-items: center;
-        gap: 7px;
         min-width: 0;
         max-width: min(100%, 24rem);
-        padding: 6px 10px;
-        border: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+        padding: 6px 0 6px 0;
         border-radius: var(--menu-badge-radius, 8px);
         background: color-mix(
             in srgb,
@@ -90,7 +83,7 @@
     }
 
     .folder-path-badge--sm {
-        padding: 7px 11px;
+        padding: 7px 0 7px 0;
         font-size: 0.76rem;
     }
 

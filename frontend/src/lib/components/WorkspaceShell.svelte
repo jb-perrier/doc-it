@@ -101,6 +101,7 @@
     :global(.side-rail__actions) {
         display: flex;
         flex-wrap: wrap;
+        align-items: flex-end;
         gap: 10px;
     }
 
@@ -112,7 +113,7 @@
         display: flex;
         flex-direction: row;
         flex-wrap: wrap;
-        align-items: flex-start;
+        align-items: flex-end;
         gap: 10px;
         min-width: 0;
     }
@@ -133,6 +134,7 @@
 
     :global(.dropdown-badge summary),
     :global(.menu-badge-button) {
+        box-sizing: border-box;
         list-style: none;
         display: inline-flex;
         align-items: center;

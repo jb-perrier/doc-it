@@ -1,4 +1,5 @@
 import type { DocumentRecord, DocumentSummary } from '$lib/types';
+import { jsonRequest, requestJson, requestVoid } from '$lib/api/client';
 
 type DocumentPayload = {
 	id: string;
@@ -16,15 +17,6 @@ type DocumentResponse = {
 	document: DocumentPayload;
 };
 
-type ErrorEnvelope = {
-	error?: {
-		code: string;
-		message: string;
-	};
-};
-
-const API_BASE = '/api';
-
 export async function listDocuments(options: { folderId?: string } = {}): Promise<DocumentSummary[]> {
 	const search = new URLSearchParams();
 	if (options.folderId) {
@@ -32,40 +24,36 @@ export async function listDocuments(options: { folderId?: string } = {}): Promis
 	}
 
 	const suffix = search.size > 0 ? `?${search.toString()}` : '';
-	const response = await fetch(`${API_BASE}/documents${suffix}`);
-	const payload = (await parseJson(response)) as DocumentListResponse;
+	const payload = await requestJson<DocumentListResponse>(`/documents${suffix}`);
 	return payload.documents.map(mapDocumentSummary);
 }
 
 export async function createDocument(title: string, folderId?: string): Promise<DocumentRecord> {
-	const response = await fetch(`${API_BASE}/documents`, {
-		method: 'POST',
-		headers: {
-			'content-type': 'application/json'
-		},
-		body: JSON.stringify({ title, folderId })
-	});
-
-	const payload = (await parseJson(response)) as DocumentResponse;
+	const payload = await requestJson<DocumentResponse>(
+		'/documents',
+		jsonRequest('POST', { title, folderId })
+	);
 	return mapDocumentRecord(payload.document);
 }
 
 export async function getDocument(documentId: string): Promise<DocumentRecord> {
-	const response = await fetch(`${API_BASE}/documents/${documentId}`);
-	const payload = (await parseJson(response)) as DocumentResponse;
+	const payload = await requestJson<DocumentResponse>(`/documents/${documentId}`);
+	return mapDocumentRecord(payload.document);
+}
+
+export async function duplicateDocument(documentId: string): Promise<DocumentRecord> {
+	const payload = await requestJson<DocumentResponse>(
+		`/documents/${documentId}/duplicate`,
+		jsonRequest('POST')
+	);
 	return mapDocumentRecord(payload.document);
 }
 
 export async function renameDocumentTitle(documentId: string, title: string): Promise<DocumentSummary> {
-	const response = await fetch(`${API_BASE}/documents/${documentId}/title`, {
-		method: 'PATCH',
-		headers: {
-			'content-type': 'application/json'
-		},
-		body: JSON.stringify({ title })
-	});
-
-	const payload = (await parseJson(response)) as DocumentResponse;
+	const payload = await requestJson<DocumentResponse>(
+		`/documents/${documentId}/title`,
+		jsonRequest('PATCH', { title })
+	);
 	return mapDocumentSummary(payload.document);
 }
 
@@ -73,26 +61,15 @@ export async function moveDocumentToFolder(
 	documentId: string,
 	folderId: string
 ): Promise<DocumentRecord> {
-	const response = await fetch(`${API_BASE}/documents/${documentId}/folder`, {
-		method: 'PATCH',
-		headers: {
-			'content-type': 'application/json'
-		},
-		body: JSON.stringify({ folderId })
-	});
-
-	const payload = (await parseJson(response)) as DocumentResponse;
+	const payload = await requestJson<DocumentResponse>(
+		`/documents/${documentId}/folder`,
+		jsonRequest('PATCH', { folderId })
+	);
 	return mapDocumentRecord(payload.document);
 }
 
-async function parseJson(response: Response) {
-	const payload = (await response.json()) as unknown;
-	if (!response.ok) {
-		const message = (payload as ErrorEnvelope).error?.message ?? 'Request failed';
-		throw new Error(message);
-	}
-
-	return payload;
+export async function deleteDocument(documentId: string): Promise<void> {
+	await requestVoid(`/documents/${documentId}`, jsonRequest('DELETE'));
 }
 
 function mapDocumentSummary(payload: DocumentPayload): DocumentSummary {

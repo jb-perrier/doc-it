@@ -1,4 +1,5 @@
 import type { FolderSummary } from '$lib/types';
+import { jsonRequest, requestJson } from '$lib/api/client';
 
 type FolderPayload = {
     id: string;
@@ -12,28 +13,38 @@ type FolderListResponse = {
     folders: FolderPayload[];
 };
 
-type ErrorEnvelope = {
-    error?: {
-        message: string;
-    };
+type FolderResponse = {
+    folder: FolderPayload;
 };
 
-const API_BASE = '/api';
-
 export async function listFolders(): Promise<FolderSummary[]> {
-    const response = await fetch(`${API_BASE}/folders`);
-    const payload = (await parseJson(response)) as FolderListResponse;
+    const payload = await requestJson<FolderListResponse>('/folders');
     return payload.folders.map(mapFolderSummary);
 }
 
-async function parseJson(response: Response) {
-    const payload = (await response.json()) as unknown;
-    if (!response.ok) {
-        const message = (payload as ErrorEnvelope).error?.message ?? 'Request failed';
-        throw new Error(message);
-    }
+export async function createFolder(
+    name: string,
+    parentFolderId?: string | null,
+): Promise<FolderSummary> {
+    const payload = await requestJson<FolderResponse>(
+        '/folders',
+        jsonRequest('POST', {
+            name,
+            parentFolderId: parentFolderId ?? null
+        }),
+    );
+    return mapFolderSummary(payload.folder);
+}
 
-    return payload;
+export async function renameFolder(
+    folderId: string,
+    name: string,
+): Promise<FolderSummary> {
+    const payload = await requestJson<FolderResponse>(
+        `/folders/${folderId}`,
+        jsonRequest('PATCH', { name }),
+    );
+    return mapFolderSummary(payload.folder);
 }
 
 function mapFolderSummary(payload: FolderPayload): FolderSummary {

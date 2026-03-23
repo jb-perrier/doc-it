@@ -78,6 +78,15 @@ impl RoomManager {
         }
     }
 
+    pub async fn current_snapshot(&self, document_id: &str) -> Option<Vec<u8>> {
+        let room = self.rooms.read().await.get(document_id).cloned();
+
+        match room {
+            Some(room) => Some(room.full_update_bytes().await),
+            None => None,
+        }
+    }
+
     async fn expire_stale_peers(&self) {
         let rooms = self.rooms.read().await;
         let list = rooms

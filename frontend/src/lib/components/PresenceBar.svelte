@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { PeerPresence } from '$lib/types';
+	import type { PeerPresence } from "$lib/types";
 
 	let { peers } = $props<{ peers: PeerPresence[] }>();
 </script>
@@ -28,8 +28,9 @@
 		align-items: center;
 		gap: var(--presence-chip-gap, 8px);
 		white-space: nowrap;
+		block-size: var(--menu-badge-height);
 		line-height: 1;
-		padding: var(--presence-chip-padding-y, 4px) var(--presence-chip-padding-x, 10px);
+		padding: 0 var(--presence-chip-padding-x, 10px);
 		border-radius: 8px;
 		background: var(--surface-overlay);
 		border: 1px solid var(--line);

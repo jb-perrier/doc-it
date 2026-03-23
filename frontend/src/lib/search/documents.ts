@@ -17,7 +17,7 @@ export function getDocumentSearchResults(
 ): DocumentSearchResult[] {
     const normalizedQuery = query.trim();
     if (!normalizedQuery) {
-        return getRecentDocumentResults(documents, options);
+        return getAlphabeticalDocumentResults(documents, options);
     }
 
     const limit = options.limit ?? 8;
@@ -41,21 +41,14 @@ export function getDocumentSearchResults(
         .slice(0, limit);
 }
 
-export function getRecentDocumentResults(
+export function getAlphabeticalDocumentResults(
     documents: DocumentSummary[],
     options: SearchOptions = {},
 ): DocumentSearchResult[] {
-    const limit = options.limit ?? 8;
-
     return getSearchableDocuments(documents, options.excludeDocumentId)
         .slice()
-        .sort(
-            (left, right) =>
-                new Date(right.updatedAt).getTime() -
-                new Date(left.updatedAt).getTime(),
-        )
-        .slice(0, limit)
-        .map((item, index) => ({ document: item, score: 100 - index }));
+        .sort(compareDocumentsAlphabetically)
+        .map((item) => ({ document: item, score: 0 }));
 }
 
 function getSearchableDocuments(
@@ -67,6 +60,29 @@ function getSearchableDocuments(
     }
 
     return documents.filter((item) => item.id !== excludeDocumentId);
+}
+
+function compareDocumentsAlphabetically(
+    left: DocumentSummary,
+    right: DocumentSummary,
+) {
+    const titleComparison = getDocumentSortLabel(left).localeCompare(
+        getDocumentSortLabel(right),
+        undefined,
+        { sensitivity: "base" },
+    );
+
+    if (titleComparison !== 0) {
+        return titleComparison;
+    }
+
+    return left.id.localeCompare(right.id, undefined, {
+        sensitivity: "base",
+    });
+}
+
+function getDocumentSortLabel(document: DocumentSummary) {
+    return document.title.trim() || "Untitled";
 }
 
 function getFuzzyMatchScore(title: string, query: string) {

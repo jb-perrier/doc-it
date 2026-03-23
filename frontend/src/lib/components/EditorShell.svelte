@@ -3,10 +3,14 @@
 	import type { Editor } from "@tiptap/core";
 	import {
 		Bold,
+		Check,
 		Code2,
+		Copy,
+		Files,
 		Italic,
 		Strikethrough,
 		Underline,
+		X,
 	} from "lucide-svelte";
 	import type * as Y from "yjs";
 
@@ -16,11 +20,13 @@
 		getEmptyFormattingState,
 		toggleEditorFormatting,
 	} from "$lib/editor/tiptap";
-	import FolderPathBadge from "$lib/components/FolderPathBadge.svelte";
+	import FolderMoveMenu from "$lib/components/FolderMoveMenu.svelte";
+	import { docToMarkdown } from "$lib/editor/markdown";
 	import type { FolderPathSegment } from "$lib/folders/path";
 	import type {
 		EditorFormattingState,
 		FormattingBadgeKey,
+		FolderSummary,
 		PeerPresence,
 	} from "$lib/types";
 
@@ -28,15 +34,38 @@
 		title,
 		doc,
 		peers,
+		folderId,
+		folders = [],
 		folderPath = [],
+		moveFolderPending = false,
+		duplicatingDocument = false,
+		deletingDocument = false,
 		onTitleChange,
+		onCreateSubfolder,
+		onDuplicateDocument,
+		onMoveToFolder,
+		onRenameFolder,
+		onDeleteDocument,
 		onSelectionChange,
 	} = $props<{
 		title: string;
 		doc: Y.Doc;
 		peers: PeerPresence[];
+		folderId: string;
+		folders?: FolderSummary[];
 		folderPath?: FolderPathSegment[];
+		moveFolderPending?: boolean;
+		duplicatingDocument?: boolean;
+		deletingDocument?: boolean;
 		onTitleChange: (title: string) => void;
+		onCreateSubfolder: (parentFolderId: string) => Promise<FolderSummary>;
+		onDuplicateDocument: () => Promise<void>;
+		onMoveToFolder: (folderId: string) => Promise<void>;
+		onRenameFolder: (
+			folderId: string,
+			name: string,
+		) => Promise<FolderSummary>;
+		onDeleteDocument: () => Promise<void>;
 		onSelectionChange: (anchor: number, head: number) => void;
 	}>();
 
@@ -73,6 +102,8 @@
 	let floatingToolbarPosition = $state({ left: 0, top: 0 });
 	let lastPointerPosition = $state<{ x: number; y: number } | null>(null);
 	let floatingToolbarHideTimer: number | null = null;
+	let copyMarkdownFeedbackTimer: number | null = null;
+	let copyMarkdownState = $state<"idle" | "copying" | "copied">("idle");
 
 	$effect(() => {
 		peers;
@@ -147,7 +178,20 @@
 
 	onDestroy(() => {
 		clearFloatingToolbarHideTimer();
+		clearCopyMarkdownFeedbackTimer();
 		editor?.destroy();
+	});
+
+	const copyMarkdownLabel = $derived.by(() => {
+		if (copyMarkdownState === "copying") {
+			return "Copying markdown";
+		}
+
+		if (copyMarkdownState === "copied") {
+			return "Copied markdown";
+		}
+
+		return "Copy markdown";
 	});
 
 	function rebuildCursorOverlays() {
@@ -187,12 +231,22 @@
 		}
 
 		formatting = getEditorFormattingState(currentEditor);
+		if (formatting.codeBlock) {
+			floatingToolbarVisible = false;
+			return;
+		}
+
 		syncFloatingToolbar();
 	}
 
 	function syncFloatingToolbar() {
 		const currentEditor = editor;
 		if (!currentEditor || !host) {
+			floatingToolbarVisible = false;
+			return;
+		}
+
+		if (currentEditor.isActive("codeBlock")) {
 			floatingToolbarVisible = false;
 			return;
 		}
@@ -283,7 +337,7 @@
 	function handleFloatingToolbarEnter() {
 		clearFloatingToolbarHideTimer();
 		isFloatingToolbarHovered = true;
-		floatingToolbarVisible = isEditorFocused;
+		floatingToolbarVisible = isEditorFocused && !formatting.codeBlock;
 	}
 
 	function handleFloatingToolbarLeave() {
@@ -303,6 +357,27 @@
 
 		toggleEditorFormatting(currentEditor, key);
 		syncEditorUi(currentEditor);
+	}
+
+	async function handleCopyMarkdown() {
+		const currentEditor = editor;
+		if (!currentEditor || copyMarkdownState === "copying") {
+			return;
+		}
+
+		copyMarkdownState = "copying";
+
+		try {
+			await writeTextToClipboard(buildMarkdownExport(currentEditor));
+			copyMarkdownState = "copied";
+			clearCopyMarkdownFeedbackTimer();
+			copyMarkdownFeedbackTimer = window.setTimeout(() => {
+				copyMarkdownFeedbackTimer = null;
+				copyMarkdownState = "idle";
+			}, 950);
+		} catch {
+			copyMarkdownState = "idle";
+		}
 	}
 
 	function handleTitleInput() {
@@ -343,6 +418,42 @@
 			.trim();
 	}
 
+	function buildMarkdownExport(currentEditor: Editor): string {
+		const normalizedTitle = normalizeTitle(title);
+		const bodyMarkdown = docToMarkdown(currentEditor.getJSON()).trim();
+
+		if (normalizedTitle && bodyMarkdown) {
+			return `# ${normalizedTitle}\n\n${bodyMarkdown}\n`;
+		}
+
+		if (normalizedTitle) {
+			return `# ${normalizedTitle}\n`;
+		}
+
+		return bodyMarkdown ? `${bodyMarkdown}\n` : "";
+	}
+
+	async function writeTextToClipboard(value: string) {
+		if (navigator.clipboard?.writeText) {
+			await navigator.clipboard.writeText(value);
+			return;
+		}
+
+		const textarea = document.createElement("textarea");
+		textarea.value = value;
+		textarea.setAttribute("readonly", "true");
+		textarea.style.position = "fixed";
+		textarea.style.opacity = "0";
+		document.body.append(textarea);
+		textarea.select();
+
+		try {
+			document.execCommand("copy");
+		} finally {
+			textarea.remove();
+		}
+	}
+
 	function placeCaretAtEnd(element: HTMLElement) {
 		const selection = window.getSelection();
 		if (!selection) {
@@ -374,11 +485,85 @@
 			floatingToolbarHideTimer = null;
 		}
 	}
+
+	function clearCopyMarkdownFeedbackTimer() {
+		if (copyMarkdownFeedbackTimer !== null) {
+			clearTimeout(copyMarkdownFeedbackTimer);
+			copyMarkdownFeedbackTimer = null;
+		}
+	}
 </script>
 
 <div class="editor-shell">
 	<div class="editor-canvas">
 		<div class="editor-title-wrap">
+			<div class="editor-folder-row">
+				<div class="editor-folder-path">
+					{#if folderPath.length > 0 && folders.length > 0}
+						<FolderMoveMenu
+							{folders}
+							currentFolderId={folderId}
+							currentPath={folderPath}
+							moving={moveFolderPending}
+							{onCreateSubfolder}
+							onMove={onMoveToFolder}
+							{onRenameFolder}
+						/>
+					{/if}
+				</div>
+				<div class="editor-document-actions">
+					<button
+						type="button"
+						class:editor-action-button--copied={copyMarkdownState ===
+							"copied"}
+						class="editor-action-button"
+						onclick={() => void handleCopyMarkdown()}
+						disabled={copyMarkdownState === "copying"}
+						aria-label={copyMarkdownLabel}
+						title={copyMarkdownLabel}
+					>
+						{#if copyMarkdownState === "copied"}
+							<span
+								class="editor-action-button__icon editor-action-button__icon--copied"
+							>
+								<Check size={14} strokeWidth={2.6} />
+							</span>
+						{:else}
+							<span class="editor-action-button__icon">
+								<Copy size={14} strokeWidth={2.2} />
+							</span>
+						{/if}
+					</button>
+					<button
+						type="button"
+						class="editor-action-button"
+						onclick={() => void onDuplicateDocument()}
+						disabled={duplicatingDocument || deletingDocument}
+						aria-label={duplicatingDocument
+							? "Duplicating document"
+							: "Duplicate document"}
+						title={duplicatingDocument
+							? "Duplicating document"
+							: "Duplicate document"}
+					>
+						<Files size={14} strokeWidth={2.2} />
+					</button>
+					<button
+						type="button"
+						class="editor-action-button editor-delete-button"
+						onclick={() => void onDeleteDocument()}
+						disabled={deletingDocument || duplicatingDocument}
+						aria-label={deletingDocument
+							? "Deleting document"
+							: "Delete document"}
+						title={deletingDocument
+							? "Deleting document"
+							: "Delete document"}
+					>
+						<X size={14} strokeWidth={2.2} />
+					</button>
+				</div>
+			</div>
 			<div
 				bind:this={titleElement}
 				class="editor-title"
@@ -392,11 +577,6 @@
 				oninput={handleTitleInput}
 				onkeydown={handleTitleKeyDown}
 			></div>
-			{#if folderPath.length > 0}
-				<div class="editor-folder-path">
-					<FolderPathBadge segments={folderPath} size="sm" />
-				</div>
-			{/if}
 		</div>
 
 		<div class="editor-host">
@@ -487,7 +667,113 @@
 	}
 
 	.editor-folder-path {
-		margin: 0.85rem 0 1.2rem;
+		margin: 0 0 0.85rem;
+		min-width: 0;
+	}
+
+	.editor-folder-row {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		margin: 0 0 0.85rem;
+	}
+
+	.editor-folder-row .editor-folder-path {
+		margin: 0;
+		flex: 1 1 auto;
+	}
+
+	.editor-document-actions {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		flex: 0 0 auto;
+	}
+
+	.editor-action-button {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 28px;
+		height: 28px;
+		padding: 0;
+		border: 0;
+		border-radius: 8px;
+		background: transparent;
+		color: var(--muted);
+		cursor: pointer;
+		transition:
+			background 120ms ease,
+			box-shadow 220ms ease,
+			color 120ms ease,
+			opacity 120ms ease,
+			transform 180ms ease;
+	}
+
+	.editor-action-button:hover:not(:disabled),
+	.editor-action-button:focus-visible {
+		background: var(--surface-overlay-medium);
+		color: var(--text-soft);
+		outline: none;
+	}
+
+	.editor-delete-button:hover:not(:disabled),
+	.editor-delete-button:focus-visible {
+		color: var(--danger);
+	}
+
+	.editor-action-button--copied {
+		background: color-mix(in srgb, #38c172 18%, transparent);
+		color: #38c172;
+		box-shadow: 0 0 0 1px color-mix(in srgb, #38c172 42%, transparent);
+		animation: copy-success-pulse 520ms ease;
+	}
+
+	.editor-action-button__icon {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		transform-origin: center;
+	}
+
+	.editor-action-button__icon--copied {
+		transform: scale(1);
+		animation: copy-check-pop 240ms cubic-bezier(0.2, 0.9, 0.2, 1.2);
+	}
+
+	.editor-action-button:disabled {
+		cursor: default;
+		opacity: 0.56;
+	}
+
+	@keyframes copy-success-pulse {
+		0% {
+			transform: scale(1);
+			box-shadow: 0 0 0 0 color-mix(in srgb, #38c172 0%, transparent);
+		}
+
+		45% {
+			transform: scale(1.08);
+			box-shadow: 0 0 0 6px color-mix(in srgb, #38c172 16%, transparent);
+		}
+
+		100% {
+			transform: scale(1);
+			box-shadow: 0 0 0 1px color-mix(in srgb, #38c172 42%, transparent);
+		}
+	}
+
+	@keyframes copy-check-pop {
+		0% {
+			opacity: 0;
+			transform: scale(0.7);
+		}
+
+		100% {
+			opacity: 1;
+			transform: scale(1);
+		}
 	}
 
 	.editor-host {
@@ -610,14 +896,14 @@
 	}
 
 	:global(:root[data-theme="light"] .doc-editor .code-block-node) {
-		--syntax-comment: rgba(90, 86, 80, 0.72);
-		--syntax-keyword: #b14a21;
-		--syntax-string: #547a26;
-		--syntax-number: #9c6a07;
-		--syntax-title: #1767a6;
-		--syntax-meta: #7d4ab3;
-		--syntax-attr: #9f5b0c;
-		--syntax-variable: #7f3f1b;
+		--syntax-comment: rgba(91, 104, 123, 0.76);
+		--syntax-keyword: #355fc0;
+		--syntax-string: #2f7a56;
+		--syntax-number: #0f7490;
+		--syntax-title: #0d63a8;
+		--syntax-meta: #7650b8;
+		--syntax-attr: #9b4d8f;
+		--syntax-variable: #b0476b;
 	}
 
 	:global(.doc-editor .code-block-node__toolbar) {

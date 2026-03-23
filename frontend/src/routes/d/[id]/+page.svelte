@@ -2,21 +2,29 @@
     import { goto } from "$app/navigation";
     import { onMount, tick } from "svelte";
     import { browser } from "$app/environment";
-    import { ChevronDown, Search, Sun, Moon } from "lucide-svelte";
+    import { ChevronDown, Search, Sun, Moon, Plus } from "lucide-svelte";
     import * as Y from "yjs";
 
     import {
         createDocument,
+        deleteDocument,
+        duplicateDocument,
         listDocuments,
         renameDocumentTitle,
     } from "$lib/api/documents";
     import { listFolders } from "$lib/api/folders";
+    import DocItLogo from "$lib/components/DocItLogo.svelte";
     import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
     import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
     import PresenceBar from "$lib/components/PresenceBar.svelte";
     import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
     import EditorShell from "$lib/components/EditorShell.svelte";
     import { getFolderPathSegments } from "$lib/folders/path";
+    import {
+        createSubfolderInCollections,
+        moveDocumentWithinFolders,
+        renameFolderInCollections,
+    } from "$lib/folders/operations";
     import { RealtimeClient } from "$lib/realtime/client";
     import { getDocumentSearchResults } from "$lib/search/documents";
     import {
@@ -62,11 +70,9 @@
     let usernameSaving = $state(false);
     let usernameErrorMessage = $state("");
     let creatingDocument = $state(false);
-
-    const documentMenu = {
-        label: "Document",
-        items: ["New", "Rename", "Duplicate", "Export Markdown", "Delete"],
-    } as const;
+    let duplicatingDocument = $state(false);
+    let deletingDocument = $state(false);
+    let moveFolderPending = $state(false);
 
     const shareMenu = {
         label: "Share",
@@ -289,12 +295,6 @@
         }
     }
 
-    function isCurrentDocumentMenuItem(
-        item: (typeof documentMenu.items)[number],
-    ) {
-        return item !== "New";
-    }
-
     async function handleCreateDocument() {
         if (creatingDocument) {
             return;
@@ -305,7 +305,10 @@
         creatingDocument = true;
 
         try {
-            const nextDocument = await createDocument("Untitled");
+            const nextDocument = await createDocument(
+                "Untitled",
+                document?.folderId,
+            );
             await goto(`/d/${nextDocument.id}`);
         } catch (error) {
             errorMessage =
@@ -315,6 +318,108 @@
         } finally {
             creatingDocument = false;
         }
+    }
+
+    async function handleDeleteDocument() {
+        if (!document || deletingDocument) {
+            return;
+        }
+
+        if (
+            browser &&
+            !window.confirm(
+                "Delete this document? This action cannot be undone.",
+            )
+        ) {
+            return;
+        }
+
+        activeTopbarMenu = null;
+        errorMessage = "";
+        deletingDocument = true;
+
+        try {
+            await deleteDocument(document.id);
+
+            destroyActiveDocumentSession();
+            document = null;
+            loading = false;
+
+            try {
+                await goto("/", { replaceState: true, invalidateAll: true });
+            } catch {
+                window.location.assign("/");
+            }
+        } catch (error) {
+            errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to delete document";
+        } finally {
+            deletingDocument = false;
+        }
+    }
+
+    async function handleDuplicateDocument() {
+        if (!document || duplicatingDocument || deletingDocument) {
+            return;
+        }
+
+        activeTopbarMenu = null;
+        errorMessage = "";
+        duplicatingDocument = true;
+
+        try {
+            const nextDocument = await duplicateDocument(document.id);
+            await goto(`/d/${nextDocument.id}`);
+        } catch (error) {
+            errorMessage =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to duplicate document";
+        } finally {
+            duplicatingDocument = false;
+        }
+    }
+
+    async function handleMoveDocumentFolder(folderId: string) {
+        if (!document || moveFolderPending || folderId === document.folderId) {
+            return;
+        }
+
+        moveFolderPending = true;
+
+        try {
+            const updated = await moveDocumentWithinFolders(document, folderId);
+            document = updated;
+        } finally {
+            moveFolderPending = false;
+        }
+    }
+
+    async function handleRenameFolder(folderId: string, name: string) {
+        const nextState = await renameFolderInCollections(
+            { folders, searchFolders },
+            folderId,
+            name,
+        );
+
+        folders = nextState.folders;
+        searchFolders = nextState.searchFolders;
+
+        return nextState.updated;
+    }
+
+    async function handleCreateSubfolder(parentFolderId: string) {
+        const nextState = await createSubfolderInCollections(
+            { folders, searchFolders },
+            parentFolderId,
+        );
+
+        folders = nextState.folders;
+        searchFolders = nextState.searchFolders;
+
+        return nextState.created;
     }
 
     async function handleUsernameSubmit() {
@@ -491,6 +596,21 @@
         searchResultsIndex = index;
     }
 
+    async function handleMoveSearchResult(
+        target: DocumentSummary,
+        folderId: string,
+    ) {
+        const updated = await moveDocumentWithinFolders(target, folderId);
+
+        searchDocuments = (searchDocuments ?? []).map((searchDocument) =>
+            searchDocument.id === updated.id ? updated : searchDocument,
+        );
+
+        if (document?.id === updated.id) {
+            document = updated;
+        }
+    }
+
     async function openSearchResult(target: DocumentSummary | null) {
         if (!target) {
             return;
@@ -523,56 +643,24 @@
 <WorkspaceShell>
     {#snippet leftRail()}
         <div class="topbar-left">
-            {#if document}
-                <details
-                    class="dropdown-badge"
-                    open={activeTopbarMenu === documentMenu.label}
-                    ontoggle={(event) =>
-                        handleTopbarMenuToggle(
-                            documentMenu.label,
-                            (event.currentTarget as HTMLDetailsElement).open,
-                        )}
-                >
-                    <summary>
-                        <span>{documentMenu.label}</span>
-                        <ChevronDown size={14} strokeWidth={2.2} />
-                    </summary>
-                    <div class="dropdown-panel">
-                        <div class="dropdown-items">
-                            {#each documentMenu.items as item (item)}
-                                <button
-                                    type="button"
-                                    class:dropdown-item--danger={item ===
-                                        "Delete"}
-                                    class:dropdown-item--separated={item ===
-                                        "New"}
-                                    class="dropdown-item"
-                                    disabled={(item === "New" &&
-                                        creatingDocument) ||
-                                        (searchModeOpen &&
-                                            isCurrentDocumentMenuItem(item))}
-                                    onclick={item === "New"
-                                        ? () => void handleCreateDocument()
-                                        : undefined}
-                                >
-                                    {item === "New" && creatingDocument
-                                        ? "Creating..."
-                                        : item}
-                                </button>
-                            {/each}
-                        </div>
-                    </div>
-                </details>
-            {:else}
-                <button
-                    type="button"
-                    class="menu-badge-button menu-badge-button--disabled"
-                    disabled
-                >
-                    <span>{documentMenu.label}</span>
-                    <ChevronDown size={14} strokeWidth={2.2} />
-                </button>
-            {/if}
+            <a
+                href="/"
+                class="document-menu-brand"
+                aria-label="Go to main page"
+            >
+                <span class="document-menu-brand__logo">
+                    <DocItLogo />
+                </span>
+            </a>
+            <button
+                type="button"
+                class="menu-badge-button"
+                onclick={() => void handleCreateDocument()}
+                disabled={creatingDocument}
+            >
+                <span>{creatingDocument ? "Creating..." : "New"}</span>
+                <Plus size={14} strokeWidth={2.2} />
+            </button>
             {#if searchModeOpen}
                 <button
                     type="button"
@@ -604,6 +692,7 @@
                 <DocumentSearchWorkspace
                     query={searchQuery}
                     results={getSearchResults()}
+                    folders={searchFolders ?? []}
                     selectedIndex={searchResultsIndex}
                     loading={searchLoading}
                     errorMessage={searchErrorMessage}
@@ -613,6 +702,7 @@
                     onKeyDown={handleSearchInputKeyDown}
                     onOpenResult={(target) => void openSearchResult(target)}
                     onHoverResult={handleSearchResultHover}
+                    onMoveResultToFolder={handleMoveSearchResult}
                 />
             {:else}
                 <div class="editor-stage">
@@ -624,8 +714,18 @@
                                 title={titleDraft}
                                 doc={ydoc}
                                 {peers}
+                                folderId={document.folderId}
+                                {folders}
                                 folderPath={getDocumentFolderPath()}
+                                {moveFolderPending}
+                                {duplicatingDocument}
+                                {deletingDocument}
                                 onTitleChange={handleTitleChange}
+                                onCreateSubfolder={handleCreateSubfolder}
+                                onDuplicateDocument={handleDuplicateDocument}
+                                onDeleteDocument={handleDeleteDocument}
+                                onMoveToFolder={handleMoveDocumentFolder}
+                                onRenameFolder={handleRenameFolder}
                                 onSelectionChange={handleSelectionChange}
                             />
                         {/key}
@@ -751,9 +851,33 @@
         color: var(--accent-strong);
     }
 
-    .dropdown-item--separated {
-        box-shadow: inset 0 -1px 0 var(--line);
-        border-radius: 0;
+    .document-menu-brand {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        block-size: var(--menu-badge-height);
+        border-radius: 10px;
+        color: inherit;
+        text-decoration: none;
+        transition:
+            background 120ms ease,
+            color 120ms ease;
+    }
+
+    .document-menu-brand:hover,
+    .document-menu-brand:focus-visible {
+        background: var(--surface-overlay-medium);
+        outline: none;
+    }
+
+    .document-menu-brand__logo {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        inline-size: clamp(72px, 11vw, 96px);
+        block-size: 100%;
+        line-height: 1;
+        color: var(--text);
     }
 
     @media (max-width: 1320px) {

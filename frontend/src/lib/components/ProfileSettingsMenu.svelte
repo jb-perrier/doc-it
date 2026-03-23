@@ -30,7 +30,6 @@
         <Settings2 size={14} strokeWidth={2.2} />
     </summary>
     <div class="dropdown-panel settings-panel">
-        <p class="dropdown-label">Profile</p>
         <form
             class="settings-panel__form"
             onsubmit={(event) => {
@@ -38,8 +37,11 @@
                 onSubmit();
             }}
         >
+            <div class="settings-panel__header">
+                <p class="settings-panel__title">Settings</p>
+                <p class="settings-panel__caption">Profile name</p>
+            </div>
             <label class="settings-panel__field">
-                <span class="settings-panel__label">Username</span>
                 <input
                     value={username}
                     class="settings-panel__input"
@@ -54,10 +56,10 @@
                         )}
                 />
             </label>
-            {#if errorMessage}
-                <p class="settings-panel__error">{errorMessage}</p>
-            {/if}
             <div class="settings-panel__actions">
+                {#if errorMessage}
+                    <p class="settings-panel__error">{errorMessage}</p>
+                {/if}
                 <button
                     type="submit"
                     class="settings-panel__submit"
@@ -73,31 +75,50 @@
 <style>
     .settings-panel {
         min-width: 260px;
+        padding: 10px;
     }
 
     .settings-panel__form {
         display: grid;
-        gap: 10px;
+        gap: 8px;
+    }
+
+    .settings-panel__header {
+        display: grid;
+        gap: 2px;
+    }
+
+    .settings-panel__title,
+    .settings-panel__caption {
+        margin: 0;
+    }
+
+    .settings-panel__title {
+        font-size: 0.84rem;
+        font-weight: 600;
+        color: var(--text);
+    }
+
+    .settings-panel__caption {
+        font-size: 0.74rem;
+        color: var(--text-soft);
     }
 
     .settings-panel__field {
-        display: grid;
-        gap: 6px;
-    }
-
-    .settings-panel__label {
-        font-size: 0.8rem;
-        color: var(--muted);
+        min-width: 0;
     }
 
     .settings-panel__input {
         width: 100%;
-        padding: 10px 12px;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        background: var(--surface-overlay);
+        padding: 8px 0;
+        border: 0;
+        border-bottom: 1px solid
+            color-mix(in srgb, var(--line) 82%, transparent);
+        border-radius: 0;
+        background: transparent;
         color: var(--text);
         outline: 0;
+        font-size: 0.84rem;
         transition:
             border-color 120ms ease,
             background 120ms ease;
@@ -105,21 +126,24 @@
 
     .settings-panel__input:focus {
         border-color: var(--surface-overlay-border);
-        background: var(--surface-overlay-medium);
+        background: transparent;
     }
 
     .settings-panel__actions {
         display: flex;
-        justify-content: flex-end;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        min-height: 28px;
     }
 
     .settings-panel__submit {
-        padding: 9px 12px;
+        padding: 7px 10px;
         border: 1px solid var(--line);
-        border-radius: 12px;
+        border-radius: 9px;
         background: var(--surface-overlay);
         color: var(--text);
-        font-size: 0.82rem;
+        font-size: 0.8rem;
         font-weight: 500;
         cursor: pointer;
         transition:
@@ -140,12 +164,8 @@
 
     .settings-panel__error {
         margin: 0;
-        font-size: 0.78rem;
+        font-size: 0.74rem;
         color: var(--accent-strong);
-    }
-
-    :global(.settings-panel .dropdown-label) {
-        padding: 12px 12px 0;
     }
 
     @media (max-width: 1180px) {

@@ -96,6 +96,70 @@ impl Database {
         })
     }
 
+    pub async fn duplicate_document(
+        &self,
+        source_document_id: &str,
+        snapshot: &[u8],
+    ) -> Result<Option<DocumentRow>, sqlx::Error> {
+        let source = sqlx::query(
+            r#"
+            SELECT COALESCE(folder_id, ?) AS folder_id, title
+            FROM documents
+            WHERE id = ?
+            "#,
+        )
+        .bind(DEFAULT_FOLDER_ID)
+        .bind(source_document_id)
+        .fetch_optional(self.pool())
+        .await?;
+
+        let Some(source) = source else {
+            return Ok(None);
+        };
+
+        let now = iso_now();
+        let document_id = Uuid::now_v7().to_string();
+        let folder_id: String = source.get("folder_id");
+        let title = duplicate_title(source.get::<String, _>("title").as_str());
+        let mut tx = self.pool().begin().await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO documents (id, folder_id, title, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&document_id)
+        .bind(&folder_id)
+        .bind(&title)
+        .bind(&now)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO document_snapshots (document_id, yjs_snapshot, created_at)
+            VALUES (?, ?, ?)
+            "#,
+        )
+        .bind(&document_id)
+        .bind(snapshot)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+
+        tx.commit().await?;
+
+        Ok(Some(DocumentRow {
+            id: document_id,
+            folder_id,
+            title,
+            created_at: now.clone(),
+            updated_at: now,
+        }))
+    }
+
     pub async fn get_document(
         &self,
         document_id: &str,
@@ -200,6 +264,20 @@ impl Database {
         }))
     }
 
+    pub async fn delete_document(&self, document_id: &str) -> Result<bool, sqlx::Error> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM documents
+            WHERE id = ?
+            "#,
+        )
+        .bind(document_id)
+        .execute(self.pool())
+        .await?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
     pub async fn load_room_seed(&self, document_id: &str) -> Result<Option<RoomSeed>, sqlx::Error> {
         let fallback_snapshot = empty_snapshot();
         let row = sqlx::query(
@@ -300,6 +378,10 @@ fn sanitize_title(title: &str) -> String {
     }
 }
 
+fn duplicate_title(title: &str) -> String {
+    format!("{} Copy", sanitize_title(title))
+}
+
 fn iso_now() -> String {
     Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
 }
@@ -315,7 +397,7 @@ fn empty_snapshot() -> Vec<u8> {
 mod tests {
     use sqlx::{Row, SqlitePool, sqlite::SqlitePoolOptions};
     use yrs::{
-        Doc, ReadTxn, StateVector, Transact, Update, XmlFragment, XmlTextPrelim,
+        Doc, GetString, ReadTxn, StateVector, Transact, Update, XmlFragment, XmlTextPrelim,
         updates::decoder::Decode,
     };
 
@@ -337,6 +419,21 @@ mod tests {
         let mut txn = doc.transact_mut();
         fragment.push_back(&mut txn, XmlTextPrelim::new(text));
         txn.encode_state_as_update_v1(&StateVector::default())
+    }
+
+    fn snapshot_text(snapshot: &[u8]) -> String {
+        let doc = Doc::new();
+        let update = Update::decode_v1(snapshot).expect("decode snapshot");
+        let mut txn = doc.transact_mut();
+        txn.apply_update(update).expect("apply snapshot");
+        drop(txn);
+
+        let txn = doc.transact();
+        let fragment = txn
+            .get_xml_fragment(COLLAB_FIELD)
+            .expect("content fragment exists");
+
+        fragment.get_string(&txn).to_string()
     }
 
     #[tokio::test]
@@ -466,5 +563,52 @@ mod tests {
             .expect("document exists");
 
         assert_eq!(moved.folder_id, child.id);
+    }
+
+    #[tokio::test]
+    async fn duplicate_document_copies_snapshot_and_folder() {
+        let pool = test_db().await;
+        let db = Database::new(pool.clone());
+
+        let parent = db
+            .create_folder("Projects", None)
+            .await
+            .expect("create folder");
+        let source = db
+            .create_document("Planning", Some(&parent.id))
+            .await
+            .expect("create source document");
+        let snapshot = snapshot_with_text("Copied content");
+
+        db.persist_room_state(&source.id, &snapshot)
+            .await
+            .expect("persist snapshot");
+
+        let duplicate = db
+            .duplicate_document(&source.id, &snapshot)
+            .await
+            .expect("duplicate document")
+            .expect("duplicate exists");
+
+        assert_ne!(duplicate.id, source.id);
+        assert_eq!(duplicate.folder_id, source.folder_id);
+        assert_eq!(duplicate.title, "Planning Copy");
+
+        let copied_seed = db
+            .load_room_seed(&duplicate.id)
+            .await
+            .expect("load duplicate room seed")
+            .expect("duplicate room seed exists");
+
+        assert_eq!(
+            snapshot_text(&copied_seed.snapshot.yjs_snapshot),
+            "Copied content"
+        );
+
+        let document_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents")
+            .fetch_one(&pool)
+            .await
+            .expect("count documents");
+        assert_eq!(document_count, 2);
     }
 }

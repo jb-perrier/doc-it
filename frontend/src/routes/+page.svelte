@@ -6,6 +6,7 @@
     import { createDocument, listDocuments } from "$lib/api/documents";
     import { listFolders } from "$lib/api/folders";
     import DocumentSearchWorkspace from "$lib/components/DocumentSearchWorkspace.svelte";
+    import { moveDocumentWithinFolders } from "$lib/folders/operations";
     import { getFolderPathSegments } from "$lib/folders/path";
     import ProfileSettingsMenu from "$lib/components/ProfileSettingsMenu.svelte";
     import WorkspaceShell from "$lib/components/WorkspaceShell.svelte";
@@ -108,6 +109,17 @@
 
     function handleSearchResultHover(index: number) {
         searchResultsIndex = index;
+    }
+
+    async function handleMoveSearchResult(
+        target: DocumentSummary,
+        folderId: string,
+    ) {
+        const updated = await moveDocumentWithinFolders(target, folderId);
+
+        documents = documents.map((document) =>
+            document.id === updated.id ? updated : document,
+        );
     }
 
     function handleSearchInputKeyDown(event: KeyboardEvent) {
@@ -229,6 +241,7 @@
         <DocumentSearchWorkspace
             query={searchQuery}
             results={getSearchResults()}
+            {folders}
             selectedIndex={searchResultsIndex}
             {loading}
             {errorMessage}
@@ -238,6 +251,7 @@
             onKeyDown={handleSearchInputKeyDown}
             onOpenResult={(target) => goto(`/d/${target.id}`)}
             onHoverResult={handleSearchResultHover}
+            onMoveResultToFolder={handleMoveSearchResult}
         />
     {/snippet}
 

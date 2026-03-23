@@ -25,17 +25,17 @@
 <style>
 	:global(:root) {
 		font-family: "IBM Plex Sans", "Aptos", "Segoe UI", sans-serif;
-		--hero-glow: rgba(224, 138, 74, 0.12);
-		--button-accent-border: rgba(229, 161, 109, 0.28);
-		--button-accent-contrast: #1a130f;
 		--danger-soft: rgba(255, 107, 122, 0.12);
 		--danger-border: rgba(255, 107, 122, 0.22);
-		--document-row-border-hover: rgba(229, 161, 109, 0.34);
-		--blockquote-line: rgba(229, 161, 109, 0.4);
 	}
 
 	:global(:root[data-theme="dark"]) {
 		color-scheme: dark;
+		--hero-glow: rgba(224, 138, 74, 0.12);
+		--button-accent-border: rgba(229, 161, 109, 0.28);
+		--button-accent-contrast: #1a130f;
+		--document-row-border-hover: rgba(229, 161, 109, 0.34);
+		--blockquote-line: rgba(229, 161, 109, 0.4);
 		--bg: #17171a;
 		--bg-elevated: #131416;
 		--panel: #1a1b1f;
@@ -73,39 +73,44 @@
 
 	:global(:root[data-theme="light"]) {
 		color-scheme: light;
-		--bg: #f3eee6;
-		--bg-elevated: #fcf8f2;
-		--panel: #fffaf4;
-		--panel-strong: #f5eee5;
-		--line: rgba(84, 64, 44, 0.14);
-		--line-strong: rgba(84, 64, 44, 0.22);
-		--text: #241c15;
-		--muted: #8a7d72;
-		--text-placeholder: rgba(36, 28, 21, 0.38);
-		--accent: #d07a35;
-		--accent-strong: #ad5a1c;
-		--toolbar-active: #2b2118;
-		--toolbar-active-text: #fdf9f3;
-		--surface-overlay: rgba(71, 47, 24, 0.04);
-		--surface-overlay-medium: rgba(71, 47, 24, 0.08);
-		--surface-overlay-strong: rgba(71, 47, 24, 0.1);
-		--surface-overlay-border: rgba(71, 47, 24, 0.14);
-		--text-soft: rgba(36, 28, 21, 0.68);
-		--code-bg: #f5ede4;
-		--code-border: rgba(84, 64, 44, 0.1);
-		--code-text: #2d231a;
+		--hero-glow: rgba(92, 119, 180, 0.1);
+		--button-accent-border: rgba(92, 119, 180, 0.24);
+		--button-accent-contrast: #f7faff;
+		--document-row-border-hover: rgba(92, 119, 180, 0.22);
+		--blockquote-line: rgba(92, 119, 180, 0.3);
+		--bg: #e4ebf3;
+		--bg-elevated: #edf2f7;
+		--panel: #f6f9fc;
+		--panel-strong: #e9eff6;
+		--line: rgba(39, 54, 78, 0.16);
+		--line-strong: rgba(39, 54, 78, 0.24);
+		--text: #162033;
+		--muted: #5f6d82;
+		--text-placeholder: rgba(22, 32, 51, 0.38);
+		--accent: #5c77b4;
+		--accent-strong: #49639b;
+		--toolbar-active: #31476f;
+		--toolbar-active-text: #f7faff;
+		--surface-overlay: rgba(29, 45, 72, 0.045);
+		--surface-overlay-medium: rgba(29, 45, 72, 0.085);
+		--surface-overlay-strong: rgba(29, 45, 72, 0.12);
+		--surface-overlay-border: rgba(29, 45, 72, 0.15);
+		--text-soft: rgba(22, 32, 51, 0.68);
+		--code-bg: #eaf0f7;
+		--code-border: rgba(39, 54, 78, 0.11);
+		--code-text: #1b2940;
 		--success: #157f5b;
 		--danger: #c84c63;
-		--shadow: 0 20px 48px rgba(86, 65, 44, 0.14);
-		--floating-toolbar-shadow: 0 10px 24px rgba(86, 65, 44, 0.1);
-		--page-bg-start: #f7f2ea;
-		--page-bg-end: #ece2d6;
-		--hero-surface-start: rgba(255, 250, 243, 0.96);
-		--hero-surface-end: rgba(244, 236, 226, 0.98);
-		--dropdown-panel-bg: rgba(255, 250, 244, 0.94);
-		--modal-backdrop: rgba(68, 49, 31, 0.2);
-		--modal-bg: rgba(255, 250, 244, 0.98);
-		--document-row-bg: rgba(208, 122, 53, 0.05);
+		--shadow: 0 20px 48px rgba(23, 35, 56, 0.14);
+		--floating-toolbar-shadow: 0 10px 24px rgba(23, 35, 56, 0.1);
+		--page-bg-start: #eff4fa;
+		--page-bg-end: #dde6f0;
+		--hero-surface-start: rgba(246, 249, 253, 0.96);
+		--hero-surface-end: rgba(235, 241, 248, 0.98);
+		--dropdown-panel-bg: rgba(246, 249, 252, 0.94);
+		--modal-backdrop: rgba(24, 37, 58, 0.18);
+		--modal-bg: rgba(246, 249, 252, 0.98);
+		--document-row-bg: rgba(92, 119, 180, 0.045);
 	}
 
 	:global(html) {
