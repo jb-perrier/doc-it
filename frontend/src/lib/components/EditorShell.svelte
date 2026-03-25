@@ -20,13 +20,12 @@
 		getEmptyFormattingState,
 		toggleEditorFormatting,
 	} from "$lib/editor/tiptap";
-	import FolderMoveMenu from "$lib/components/FolderMoveMenu.svelte";
+	import FolderPathBadge from "$lib/components/FolderPathBadge.svelte";
 	import { docToMarkdown } from "$lib/editor/markdown";
 	import type { FolderPathSegment } from "$lib/folders/path";
 	import type {
 		EditorFormattingState,
 		FormattingBadgeKey,
-		FolderSummary,
 		PeerPresence,
 	} from "$lib/types";
 
@@ -34,37 +33,24 @@
 		title,
 		doc,
 		peers,
-		folderId,
-		folders = [],
 		folderPath = [],
-		moveFolderPending = false,
 		duplicatingDocument = false,
 		deletingDocument = false,
 		onTitleChange,
-		onCreateSubfolder,
 		onDuplicateDocument,
-		onMoveToFolder,
-		onRenameFolder,
+		onOpenFolderPath,
 		onDeleteDocument,
 		onSelectionChange,
 	} = $props<{
 		title: string;
 		doc: Y.Doc;
 		peers: PeerPresence[];
-		folderId: string;
-		folders?: FolderSummary[];
 		folderPath?: FolderPathSegment[];
-		moveFolderPending?: boolean;
 		duplicatingDocument?: boolean;
 		deletingDocument?: boolean;
 		onTitleChange: (title: string) => void;
-		onCreateSubfolder: (parentFolderId: string) => Promise<FolderSummary>;
 		onDuplicateDocument: () => Promise<void>;
-		onMoveToFolder: (folderId: string) => Promise<void>;
-		onRenameFolder: (
-			folderId: string,
-			name: string,
-		) => Promise<FolderSummary>;
+		onOpenFolderPath: () => void;
 		onDeleteDocument: () => Promise<void>;
 		onSelectionChange: (anchor: number, head: number) => void;
 	}>();
@@ -499,16 +485,16 @@
 		<div class="editor-title-wrap">
 			<div class="editor-folder-row">
 				<div class="editor-folder-path">
-					{#if folderPath.length > 0 && folders.length > 0}
-						<FolderMoveMenu
-							{folders}
-							currentFolderId={folderId}
-							currentPath={folderPath}
-							moving={moveFolderPending}
-							{onCreateSubfolder}
-							onMove={onMoveToFolder}
-							{onRenameFolder}
-						/>
+					{#if folderPath.length > 0}
+						<button
+							type="button"
+							class="editor-folder-path__button"
+							onclick={onOpenFolderPath}
+							aria-label="Open this folder in search explorer"
+							title="Open this folder in search explorer"
+						>
+							<FolderPathBadge segments={folderPath} size="sm" />
+						</button>
 					{/if}
 				</div>
 				<div class="editor-document-actions">
@@ -669,6 +655,30 @@
 	.editor-folder-path {
 		margin: 0 0 0.85rem;
 		min-width: 0;
+	}
+
+	.editor-folder-path__button {
+		display: inline-flex;
+		align-items: center;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		cursor: pointer;
+		color: inherit;
+	}
+
+	.editor-folder-path__button:hover :global(.folder-path-badge),
+	.editor-folder-path__button:focus-visible :global(.folder-path-badge) {
+		background: transparent;
+		color: var(--text-soft);
+	}
+
+	.editor-folder-path__button:focus-visible {
+		outline: none;
+	}
+
+	.editor-folder-path__button :global(.folder-path-badge) {
+		background: transparent;
 	}
 
 	.editor-folder-row {

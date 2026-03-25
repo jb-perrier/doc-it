@@ -1,8 +1,15 @@
 <script lang="ts">
-    let { className = "" }: { className?: string } = $props();
+    let {
+        className = "",
+        fontSize,
+    }: { className?: string; fontSize?: string } = $props();
 </script>
 
-<span class={`doc-it-logo ${className}`.trim()} aria-hidden="true">DOC-IT</span>
+<span
+    class={`doc-it-logo ${className}`.trim()}
+    style={fontSize ? `font-size: ${fontSize};` : undefined}
+    aria-hidden="true">DOC-IT</span
+>
 
 <style>
     .doc-it-logo {

@@ -59,6 +59,10 @@ const HighlightedCodeBlock = CodeBlockLowlight.configure({
 
 			const dom = document.createElement('div');
 			dom.className = 'code-block-node';
+			dom.setAttribute('data-gramm', 'false');
+			dom.setAttribute('data-gramm_editor', 'false');
+			dom.setAttribute('data-enable-grammarly', 'false');
+			dom.setAttribute('data-lt-active', 'false');
 
 			const toolbar = document.createElement('div');
 			toolbar.className = 'code-block-node__toolbar';
@@ -77,7 +81,20 @@ const HighlightedCodeBlock = CodeBlockLowlight.configure({
 			toolbar.append(languageSelect);
 
 			const pre = document.createElement('pre');
+			pre.spellcheck = false;
+			pre.setAttribute('data-gramm', 'false');
+			pre.setAttribute('data-gramm_editor', 'false');
+			pre.setAttribute('data-enable-grammarly', 'false');
+			pre.setAttribute('data-lt-active', 'false');
 			const code = document.createElement('code');
+			code.spellcheck = false;
+			code.setAttribute('autocapitalize', 'off');
+			code.setAttribute('autocorrect', 'off');
+			code.setAttribute('translate', 'no');
+			code.setAttribute('data-gramm', 'false');
+			code.setAttribute('data-gramm_editor', 'false');
+			code.setAttribute('data-enable-grammarly', 'false');
+			code.setAttribute('data-lt-active', 'false');
 			pre.append(code);
 			dom.append(toolbar, pre);
 

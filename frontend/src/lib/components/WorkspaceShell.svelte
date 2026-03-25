@@ -143,9 +143,9 @@
         block-size: var(--menu-badge-height);
         line-height: 1;
         padding: 0 var(--presence-chip-padding-x, 10px);
-        border: 1px solid var(--line);
+        border: 1px solid var(--line-strong);
         border-radius: var(--menu-badge-radius);
-        background: var(--surface-overlay);
+        background: var(--surface-overlay-medium);
         color: var(--text);
         font-size: var(--presence-chip-font-size, 0.84rem);
         font-weight: 500;
@@ -196,7 +196,7 @@
     :global(.dropdown-badge[open] summary),
     :global(.dropdown-badge summary:hover),
     :global(.menu-badge-button:not(:disabled):hover) {
-        background: var(--surface-overlay-medium);
+        background: var(--surface-overlay-strong);
         border-color: var(--surface-overlay-border);
     }
 
@@ -206,10 +206,11 @@
         left: 0;
         min-width: 220px;
         padding: 0;
-        border: 1px solid var(--line);
+        border: 1px solid var(--line-strong);
         border-radius: var(--menu-badge-radius);
-        background: var(--surface-overlay);
+        background: var(--dropdown-panel-bg, var(--panel));
         box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
     }
 
     :global(.dropdown-badge--right .dropdown-panel) {
